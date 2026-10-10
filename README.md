@@ -1,5 +1,7 @@
 # pathwayoracle-mcp
 
+MCP toolkit implementation of PathwayOracle core tools. Compatible directly with Claude Desktop or as part of PathwayOracle's DeepAgent workflows in Pathway Analysis.
+
 MCP tools over the PathwayOracle knowledge base: a Qdrant store of UniProt
 protein-function text, embedded with a fine-tuned BioBERT, and a Neo4j
 Reactome graph. The data is built and published by
