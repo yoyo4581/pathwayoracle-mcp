@@ -1,0 +1,7 @@
+.git
+.venv
+**/__pycache__
+*.pyc
+handoff_context.md
+compose.yaml
+Dockerfile

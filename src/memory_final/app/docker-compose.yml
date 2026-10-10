@@ -1,0 +1,8 @@
+services:
+  graph-memory:
+    build: .
+    stdin_open: true
+    volumes:
+      - ./data:/app/data
+    labels:
+      com.docker.compose.mcp.description: "Graph-based memory store with semantic search"

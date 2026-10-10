@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.env
+
+# Saved chat data from the KG_Memory reference code (personal; stays local)
+*.db
+*.pkl
+src/memory_final/app/data/
+src/memory_final/*.ipynb

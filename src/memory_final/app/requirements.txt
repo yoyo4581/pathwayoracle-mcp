@@ -1,0 +1,14 @@
+fastmcp>=3.0.0rc1
+langchain
+qdrant-client
+networkx
+transformers
+torch==2.8.0
+scikit-learn
+numpy
+langchain-qdrant
+matplotlib
+langchain
+langgraph-checkpoint-sqlite
+langchain-mcp-adapters
+langchain-openai

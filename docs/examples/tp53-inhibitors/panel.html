@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Which proteins inhibit TP53&#x27;s stability or activity?</title>
+<style>
+  :root { --bg:#ffffff; --fg:#1d1d1f; --muted:#6b6b70; --line:#d9d9de; --panel:#f6f6f8; --accent:#2f6fde;
+          --ok:#1f7a3f; --warn:#a15c00; --bad:#b3261e; --hl:#f5b301;
+          --gene:#2f6fde; --rxn:#8e44ad; --pathway:#d9822b; --go:#2e9e5b; --entity:#7f8c8d;
+          --passage:#0f8b8d; --abstract:#0b6e70; --agg:#95a5a6; --pos:#2e9e5b; --neg:#c0392b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#1e1e20; --fg:#ececf1; --muted:#9a9aa3; --line:#3a3a40; --panel:#26262a; --accent:#7aa7ff;
+            --ok:#5ccf86; --warn:#f0a94a; --bad:#ff8a80; --hl:#ffd54f;
+            --gene:#7aa7ff; --rxn:#c79be0; --pathway:#f0a95b; --go:#6fd49a; --entity:#aab4b5;
+            --passage:#4fd1c5; --abstract:#38b2ac; --agg:#b0bec5; --pos:#6fd49a; --neg:#ff8a80; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; background:var(--bg); color:var(--fg);
+               font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #status { color: var(--muted); font-size: 12px; padding: 10px 12px 0; }
+  .wrap { display:grid; grid-template-columns: minmax(200px, 30%) 1fr; gap: 10px; padding: 8px 12px 12px; }
+  @media (max-width: 600px) { .wrap { grid-template-columns: 1fr; } }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 2px 0 6px; font-weight: 600; }
+  .claim { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 6px;
+           background: var(--panel); cursor: pointer; }
+  .claim:hover, .claim.pinned { border-color: var(--hl); }
+  .claim .n { display:inline-block; min-width: 18px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .badge { display:inline-block; font-size: 11px; padding: 0 6px; border-radius: 9px; margin-left: 4px; border: 1px solid currentColor; }
+  .supported, .fetched { color: var(--ok); } .partial, .referenced { color: var(--warn); } .unsupported, .unknown { color: var(--bad); }
+  .cites { color: var(--muted); font-size: 11px; margin-top: 3px; word-break: break-all; }
+  .src { text-transform: none; letter-spacing: 0; font-weight: 500; }
+  .src.database { color: var(--accent); } .src.model { color: var(--muted); border-style: dashed; }
+  .basis { color: var(--muted); font-size: 11px; margin: -4px 0 6px; }
+  .note { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .toolbar { display:flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; align-items:center; }
+  .toolbar button { font: inherit; font-size: 12px; padding: 3px 9px; border: 1px solid var(--line);
+                    background: var(--panel); color: var(--fg); border-radius: 6px; cursor: pointer; }
+  .toolbar button:hover { border-color: var(--accent); }
+  .toolbar button[hidden] { display: none; }
+  .toolbar .sp { flex: 1; }
+  #graph { height: 440px; border: 1px solid var(--line); border-radius: 8px; position: relative; }
+  body.fullscreen #graph { height: calc(100vh - 230px); min-height: 420px; }
+  #tip { position: absolute; pointer-events: none; max-width: 360px; padding: 8px 10px;
+         background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px;
+         box-shadow: 0 4px 14px rgba(0,0,0,.18); display: none; z-index: 10; font-size: 12px; white-space: pre-wrap; }
+  #tip b { display:block; margin-bottom: 4px; white-space: normal; }
+  .legend { display:flex; flex-wrap: wrap; gap: 4px 10px; color: var(--muted); font-size: 11px; margin-top: 6px; }
+  .legend span { cursor: pointer; user-select: none; }
+  .legend span.off { opacity: .35; text-decoration: line-through; }
+  .legend i { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+  #details { margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--panel); display: none; }
+  #details h3 { margin: 0 0 4px; font-size: 13px; }
+  #details .meta { color: var(--muted); font-size: 11px; margin-bottom: 6px; }
+  #details .text { white-space: pre-wrap; font-size: 12px; max-height: 220px; overflow: auto; }
+  #details code { font-size: 11px; }
+</style>
+</head>
+<body>
+<div id="status">Waiting for the evidence view…</div>
+<div class="wrap">
+  <div class="side">
+    <h2>Claims</h2>
+    <div id="claims"></div>
+    <div class="note" id="notes"></div>
+  </div>
+  <div>
+    <div class="toolbar">
+      <button id="b-fit" title="Fit the graph to the frame">Fit</button>
+      <button id="b-phys" title="Pause or resume the force simulation">Pause physics</button>
+      <button id="b-full" title="Fullscreen" hidden>Fullscreen</button>
+      <span class="sp"></span>
+      <button id="b-png" title="Download the graph as PNG">PNG</button>
+      <button id="b-json" title="Download the view as JSON">JSON</button>
+      <button id="b-open" title="Open as a standalone page" hidden>Open page</button>
+    </div>
+    <div id="graph"><div id="tip"></div></div>
+    <div class="legend" id="legend"></div>
+    <div id="details"></div>
+  </div>
+</div>
+
+<script>window.__EVIDENCE__ = {"release": "serving-v20261006193533", "session": "stdio-21a29ece8411", "scope": "claims", "claims": [{"i": 0, "label": "MDM2 ubiquitinates TP53 for proteasomal degradation", "status": "supported", "cites": {"reaction:R-HSA-6804879": "fetched", "qdrant:Q00987#0": "fetched"}, "theme": "Degradation"}, {"i": 1, "label": "MDM4 binds TP53 and suppresses its transactivation", "status": "supported", "cites": {"reaction:R-HSA-6804879": "fetched", "qdrant:O15151#0": "fetched", "qdrant:O15151#2": "fetched"}, "theme": "Degradation"}, {"i": 2, "label": "RNF34/RFFL ubiquitinate phosphorylated TP53", "status": "supported", "cites": {"reaction:R-HSA-6804441": "fetched", "qdrant:Q969K3#3": "fetched"}, "theme": "Degradation"}, {"i": 3, "label": "GTSE1 hands PolyUb-TP53 to the 26S proteasome", "status": "supported", "cites": {"reaction:R-HSA-8852354": "fetched"}, "theme": "Degradation"}, {"i": 4, "label": "AURKA phosphorylates TP53 S315, destabilising it", "status": "supported", "cites": {"reaction:R-HSA-6805103": "fetched", "qdrant:O14965#10": "fetched"}, "theme": "Inactivating modification"}, {"i": 5, "label": "AURKB phosphorylation represses TP53 transcription", "status": "supported", "cites": {"reaction:R-HSA-6805126": "fetched", "qdrant:Q96GD4#11": "fetched"}, "theme": "Inactivating modification"}, {"i": 6, "label": "SMYD2 methylates K370, lowering DNA binding", "status": "supported", "cites": {"reaction:R-HSA-3222237": "fetched", "qdrant:Q9NRG4#3": "fetched"}, "theme": "Inactivating modification"}, {"i": 7, "label": "SETD8/KMT5A methylates K382, repressing targets", "status": "supported", "cites": {"reaction:R-HSA-6805740": "fetched", "qdrant:Q9NQR1#7": "fetched"}, "theme": "Inactivating modification"}, {"i": 8, "label": "EHMT1:EHMT2 dimethylate K373", "status": "supported", "cites": {"reaction:R-HSA-6805755": "fetched", "qdrant:Q9H9B1#9": "fetched"}, "theme": "Inactivating modification"}, {"i": 9, "label": "PRDM1 represses TP53 expression", "status": "supported", "cites": {"reaction:R-HSA-6804188": "fetched", "edge:O75626-ACTS_ON->P04637@R-HSA-6804188": "fetched"}, "theme": "Reduced expression"}, {"i": 10, "label": "STAT3 inhibits TP53 expression", "status": "supported", "cites": {"reaction:R-HSA-6789960": "fetched"}, "theme": "Reduced expression"}], "themes": [{"name": "Degradation", "claims": [0, 1, 2, 3]}, {"name": "Inactivating modification", "claims": [4, 5, 6, 7, 8]}, {"name": "Reduced expression", "claims": [9, 10]}], "nodes": [{"id": "P04637", "kind": "entity", "label": "Gene", "name": "TP53", "cite": "node:Gene:P04637", "returned_by": ["find_entities", "gene_reactions", "gene_interactions", "reaction_details"], "mentions": 32, "source": "neo4j", "text": null, "cited": true, "claims": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]}, {"id": "R-HSA-8852354", "kind": "entity", "label": "Reaction", "name": "GTSE1 facilitates proteasome-mediated degradation of TP53", "cite": "reaction:R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 33, "source": "neo4j", "text": null, "cited": true, "claims": [3], "theme": "Degradation"}, {"id": "R-HSA-6804879", "kind": "entity", "label": "Reaction", "name": "MDM2 ubiquitinates TP53", "cite": "reaction:R-HSA-6804879", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 6, "source": "neo4j", "text": null, "cited": true, "claims": [0, 1], "theme": "Degradation"}, {"id": "R-HSA-6805126", "kind": "entity", "label": "Reaction", "name": "AURKB phosphorylates TP53", "cite": "reaction:R-HSA-6805126", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 3, "source": "neo4j", "text": null, "cited": true, "claims": [5], "theme": "Inactivating modification"}, {"id": "R-HSA-6804441", "kind": "entity", "label": "Reaction", "name": "RNF34 or RFFL ubiquitinates phosphorylated TP53", "cite": "reaction:R-HSA-6804441", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 3, "source": "neo4j", "text": null, "cited": true, "claims": [2], "theme": "Degradation"}, {"id": "R-HSA-6805103", "kind": "entity", "label": "Reaction", "name": "AURKA phosphorylates TP53", "cite": "reaction:R-HSA-6805103", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 4, "source": "neo4j", "text": "controls: CATALYST p-T288-AURKA:TPX2", "cited": true, "claims": [4], "theme": "Inactivating modification"}, {"id": "R-HSA-6805755", "kind": "entity", "label": "Reaction", "name": "EHMT1:EHMT2 dimethylates TP53", "cite": "reaction:R-HSA-6805755", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 3, "source": "neo4j", "text": null, "cited": true, "claims": [8], "theme": "Inactivating modification"}, {"id": "R-HSA-3222237", "kind": "entity", "label": "Reaction", "name": "SMYD2 methylates TP53", "cite": "reaction:R-HSA-3222237", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": true, "claims": [6], "theme": "Inactivating modification"}, {"id": "R-HSA-6789960", "kind": "entity", "label": "Reaction", "name": "Expression of NDN,TP53", "cite": "reaction:R-HSA-6789960", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": true, "claims": [10], "theme": "Reduced expression"}, {"id": "R-HSA-6805740", "kind": "entity", "label": "Reaction", "name": "SETD8 methylates TP53", "cite": "reaction:R-HSA-6805740", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": true, "claims": [7], "theme": "Inactivating modification"}, {"id": "R-HSA-6804188", "kind": "entity", "label": "Reaction", "name": "PRDM1 represses TP53 expression", "cite": "reaction:R-HSA-6804188", "returned_by": ["gene_reactions", "gene_interactions", "reaction_details"], "mentions": 3, "source": "neo4j", "text": null, "cited": true, "claims": [9], "theme": "Reduced expression"}, {"id": "O75626", "kind": "entity", "label": "Gene", "name": "PRDM1", "cite": "O75626", "returned_by": ["gene_reactions", "gene_interactions", "reaction_details"], "mentions": 3, "source": "neo4j", "text": null, "cited": true, "claims": [9], "theme": "Reduced expression"}, {"id": "qdrant:O14965#10", "kind": "evidence", "label": "passage", "name": "qdrant:O14965#10", "cite": "qdrant:O14965#10", "returned_by": ["read_snippets"], "mentions": 1, "source": "qdrant", "text": "Also acts as a key regulatory component of the p53/TP53 pathway, and particularly the checkpoint-response pathways critical for oncogenic transformation of cells, by phosphorylating and destabilizing p53/TP53 (PubMed:14702041). Phosphorylates its own inhibitors, the protein phosphatase type 1 (PP1) isoforms, to inhibit their activity (PubMed:11551964).", "status": "fetched", "cited": true, "claims": [4], "theme": "Inactivating modification"}, {"id": "qdrant:O15151#0", "kind": "evidence", "label": "passage", "name": "qdrant:O15151#0", "cite": "qdrant:O15151#0", "returned_by": ["read_snippets"], "mentions": 1, "source": "qdrant", "text": "Contributes to p53/TP53 regulation (PubMed:32300648). Inhibits p53/TP53- and p73/TP73-mediated cell cycle arrest and apoptosis by binding their transcriptional activation domains.", "status": "fetched", "cited": true, "claims": [1], "theme": "Degradation"}, {"id": "qdrant:O15151#2", "kind": "evidence", "label": "passage", "name": "qdrant:O15151#2", "cite": "qdrant:O15151#2", "returned_by": ["read_snippets"], "mentions": 1, "source": "qdrant", "text": "Inhibits degradation of MDM2. Can reverse MDM2-targeted degradation of TP53 while maintaining suppression of TP53 transactivation and apoptotic functions. .", "status": "fetched", "cited": true, "claims": [1], "theme": "Degradation"}, {"id": "qdrant:Q00987#0", "kind": "evidence", "label": "passage", "name": "qdrant:Q00987#0", "cite": "qdrant:Q00987#0", "returned_by": ["read_snippets"], "mentions": 1, "source": "qdrant", "text": "E3 ubiquitin-protein ligase that mediates ubiquitination of p53/TP53, leading to its degradation by the proteasome (PubMed:29681526, PubMed:21317885). Inhibits p53/TP53- and p73/TP73-mediated cell cycle arrest and apoptosis by binding its transcriptional activation domain.", "status": "fetched", "cited": true, "claims": [0], "theme": "Degradation"}, {"id": "qdrant:Q969K3#3", "kind": "evidence", "label": "passage", "name": "qdrant:Q969K3#3", "cite": "qdrant:Q969K3#3", "returned_by": ["read_snippets"], "mentions": 1, "source": "qdrant", "text": "Negatively regulates p53/TP53 through its direct ubiquitination and targeting to proteasomal degradation (PubMed:17121812). Indirectly, may also negatively regulate p53/TP53 through ubiquitination and degradation of SFN (PubMed:18382127).", "status": "fetched", "cited": true, "claims": [2], "theme": "Degradation"}, {"id": "qdrant:Q96GD4#11", "kind": "evidence", "label": "passage", "name": "qdrant:Q96GD4#11", "cite": "qdrant:Q96GD4#11", "returned_by": ["read_snippets"], "mentions": 1, "source": "qdrant", "text": "Phosphorylation of p53/TP53 negatively regulates its transcriptional activity (PubMed:20959462). Key regulator of active promoters in resting B- and T-lymphocytes: acts by mediating phosphorylation of H3S28ph at active promoters in resting B-cells, inhibiting RNF2/RING1B-mediated ubiquitination of histone H2A and enhancing binding and activity of the USP16 deubiquitinase at transcribed genes (By similarity).", "status": "fetched", "cited": true, "claims": [5], "theme": "Inactivating modification"}, {"id": "qdrant:Q9H9B1#9", "kind": "evidence", "label": "passage", "name": "qdrant:Q9H9B1#9", "cite": "qdrant:Q9H9B1#9", "returned_by": ["read_snippets"], "mentions": 1, "source": "qdrant", "text": "In addition to the histone methyltransferase activity, also methylates non-histone proteins: mediates dimethylation of 'Lys-373' of p53/TP53 (PubMed:20118233). Represses the expression of mitochondrial function-related genes, perhaps by occupying their promoter regions, working in concert with probable chromatin reader BAZ2B (By similarity). .", "status": "fetched", "cited": true, "claims": [8], "theme": "Inactivating modification"}, {"id": "qdrant:Q9NQR1#7", "kind": "evidence", "label": "passage", "name": "qdrant:Q9NQR1#7", "cite": "qdrant:Q9NQR1#7", "returned_by": ["read_snippets"], "mentions": 1, "source": "qdrant", "text": "Mediates monomethylation of p53/TP53 at 'Lys-382', leading to repress p53/TP53-target genes (PubMed:17707234). Plays a negative role in TGF-beta response regulation and a positive role in cell migration (PubMed:23478445). .", "status": "fetched", "cited": true, "claims": [7], "theme": "Inactivating modification"}, {"id": "qdrant:Q9NRG4#3", "kind": "evidence", "label": "passage", "name": "qdrant:Q9NRG4#3", "cite": "qdrant:Q9NRG4#3", "returned_by": ["read_snippets"], "mentions": 1, "source": "qdrant", "text": "Shows even higher methyltransferase activity on p53/TP53. Monomethylates 'Lys-370' of p53/TP53, leading to decreased DNA-binding activity and subsequent transcriptional regulation activity of p53/TP53.", "status": "fetched", "cited": true, "claims": [6], "theme": "Inactivating modification"}, {"id": "O15151", "kind": "entity", "label": "Gene", "name": "MDM4", "cite": "O15151", "returned_by": ["gene_reactions", "reaction_details", "read_snippets"], "mentions": 9, "source": "neo4j", "text": null, "cited": false, "claims": [0, 1], "theme": "Degradation"}, {"id": "Q00987", "kind": "entity", "label": "Gene", "name": "MDM2", "cite": "Q00987", "returned_by": ["gene_reactions", "reaction_details", "read_snippets"], "mentions": 9, "source": "neo4j", "text": null, "cited": false, "claims": [0, 1], "theme": "Degradation"}, {"id": "Q96GD4", "kind": "entity", "label": "Gene", "name": "AURKB", "cite": "Q96GD4", "returned_by": ["gene_reactions", "reaction_details", "read_snippets"], "mentions": 5, "source": "neo4j", "text": null, "cited": false, "claims": [5], "theme": "Inactivating modification"}, {"id": "O14965", "kind": "entity", "label": "Gene", "name": "AURKA", "cite": "O14965", "returned_by": ["gene_reactions", "reaction_details", "read_snippets"], "mentions": 3, "source": "neo4j", "text": null, "cited": false, "claims": [4], "theme": "Inactivating modification"}, {"id": "Q969K3", "kind": "entity", "label": "Gene", "name": "RNF34", "cite": "Q969K3", "returned_by": ["gene_reactions", "reaction_details", "read_snippets"], "mentions": 3, "source": "neo4j", "text": null, "cited": false, "claims": [2], "theme": "Degradation"}, {"id": "Q9H9B1", "kind": "entity", "label": "Gene", "name": "EHMT1", "cite": "Q9H9B1", "returned_by": ["gene_reactions", "reaction_details", "read_snippets"], "mentions": 3, "source": "neo4j", "text": null, "cited": false, "claims": [8], "theme": "Inactivating modification"}, {"id": "Q9NQR1", "kind": "entity", "label": "Gene", "name": "KMT5A", "cite": "Q9NQR1", "returned_by": ["gene_reactions", "reaction_details", "read_snippets"], "mentions": 3, "source": "neo4j", "text": null, "cited": false, "claims": [7], "theme": "Inactivating modification"}, {"id": "Q9NRG4", "kind": "entity", "label": "Gene", "name": "SMYD2", "cite": "Q9NRG4", "returned_by": ["gene_reactions", "reaction_details", "read_snippets"], "mentions": 3, "source": "neo4j", "text": null, "cited": false, "claims": [6], "theme": "Inactivating modification"}, {"id": "Q9NYZ3", "kind": "entity", "label": "Gene", "name": "GTSE1", "cite": "Q9NYZ3", "returned_by": ["reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation"}, {"id": "P40763", "kind": "entity", "label": "Gene", "name": "STAT3", "cite": "P40763", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [10], "theme": "Reduced expression"}, {"id": "Q99608", "kind": "entity", "label": "Gene", "name": "NDN", "cite": "Q99608", "returned_by": ["reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [10], "theme": "Reduced expression"}, {"id": "Q8WZ73", "kind": "entity", "label": "Gene", "name": "RFFL", "cite": "Q8WZ73", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [2], "theme": "Degradation"}, {"id": "Q96KQ7", "kind": "entity", "label": "Gene", "name": "EHMT2", "cite": "Q96KQ7", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [8], "theme": "Inactivating modification"}, {"id": "Q9ULW0", "kind": "entity", "label": "Gene", "name": "TPX2", "cite": "Q9ULW0", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [4], "theme": "Inactivating modification"}, {"id": "Q9Y3T9", "kind": "entity", "label": "Gene", "name": "NOC2L", "cite": "Q9Y3T9", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 4, "source": "neo4j", "text": null, "cited": false, "claims": [5], "theme": "Inactivating modification"}, {"id": "Q8N726", "kind": "entity", "label": "Gene", "name": "CDKN2A", "cite": "Q8N726", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 3, "source": "neo4j", "text": null, "cited": false, "claims": [0, 1], "theme": "Degradation"}, {"id": "P0CG47", "kind": "entity", "label": "Gene", "name": "UBB", "cite": "P0CG47", "returned_by": ["reaction_details"], "mentions": 3, "source": "neo4j", "text": null, "cited": false, "claims": [0, 1, 2, 3], "theme": "Degradation"}, {"id": "P0CG48", "kind": "entity", "label": "Gene", "name": "UBC", "cite": "P0CG48", "returned_by": ["reaction_details"], "mentions": 3, "source": "neo4j", "text": null, "cited": false, "claims": [0, 1, 2, 3], "theme": "Degradation"}, {"id": "P62979", "kind": "entity", "label": "Gene", "name": "RPS27A", "cite": "P62979", "returned_by": ["reaction_details"], "mentions": 3, "source": "neo4j", "text": null, "cited": false, "claims": [0, 1, 2, 3], "theme": "Degradation"}, {"id": "group:+33 Gene", "kind": "group", "label": "group", "name": "+33 more Gene", "text": "UBA52, PSMD11, PSMD12, PSMD14, PSMA7, PSMD3, PSMC3, PSMB1, PSMA1, PSMA2, PSMA3, PSMA4, PSMA5, PSMB4, PSMB6, PSMB5, PSMC2, PSMC4, PSMD8, PSMB3, PSMB2, PSMD7, SEM1, PSMA6, PSMC1, PSMC5, PSMC6, PSMD2, PSMD6, ADRM1, PSMB7, PSMD1, PSMD13", "members": ["P62987", "O00231", "O00232", "O00487", "O14818", "O43242", "P17980", "P20618", "P25786", "P25787", "P25788", "P25789", "P28066", "P28070", "P28072", "P28074", "P35998", "P43686", "P48556", "P49720", "P49721", "P51665", "P60896", "P60900", "P62191", "P62195", "P62333", "Q13200", "Q15008", "Q16186", "Q99436", "Q99460", "Q9UNM6"], "cited": false, "claims": [0, 1, 2, 3]}], "edges": [{"id": "P04637|R-HSA-6805103|REACTANT", "source": "P04637", "target": "R-HSA-6805103", "returned_by": ["gene_reactions", "reaction_details"], "rel": "REACTANT", "via": "TP53 Tetramer", "cite": "reaction:R-HSA-6805103", "claims": [], "cited": false}, {"id": "P04637|R-HSA-8852354|REACTANT", "source": "P04637", "target": "R-HSA-8852354", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "p-S435-GTSE1:PolyUb-TP53 Tetramer", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P04637|R-HSA-6805126|CATALYST", "source": "P04637", "target": "R-HSA-6805126", "returned_by": ["reaction_details"], "rel": "CATALYST", "via": "AURKB:NOC2L:p-S15,S20-TP53", "cite": "reaction:R-HSA-6805126", "claims": [], "cited": false}, {"id": "P04637|R-HSA-6805126|REACTANT", "source": "P04637", "target": "R-HSA-6805126", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "AURKB:NOC2L:p-S15,S20-TP53", "cite": "reaction:R-HSA-6805126", "claims": [], "cited": false}, {"id": "P04637|R-HSA-6805755|REACTANT", "source": "P04637", "target": "R-HSA-6805755", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "TP53 Tetramer", "cite": "reaction:R-HSA-6805755", "claims": [], "cited": false}, {"id": "P04637|R-HSA-6804441|REACTANT", "source": "P04637", "target": "R-HSA-6804441", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "p-S15,S20-TP53 Tetramer", "cite": "reaction:R-HSA-6804441", "claims": [], "cited": false}, {"id": "P04637|R-HSA-6805740|REACTANT", "source": "P04637", "target": "R-HSA-6805740", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "p-S15,S20-TP53 Tetramer", "cite": "reaction:R-HSA-6805740", "claims": [], "cited": false}, {"id": "P04637|R-HSA-3222237|REACTANT", "source": "P04637", "target": "R-HSA-3222237", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "p-S15,S20-TP53 Tetramer", "cite": "reaction:R-HSA-3222237", "claims": [], "cited": false}, {"id": "P04637|R-HSA-6804879|CATALYST", "source": "P04637", "target": "R-HSA-6804879", "returned_by": ["reaction_details"], "rel": "CATALYST", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "P04637|R-HSA-6804879|REACTANT", "source": "P04637", "target": "R-HSA-6804879", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "P04637|R-HSA-6804188|INHIBITOR", "source": "P04637", "target": "R-HSA-6804188", "returned_by": ["reaction_details"], "rel": "INHIBITOR", "via": "PRDM1:TP53 Gene", "cite": "reaction:R-HSA-6804188", "claims": [], "cited": false}, {"id": "P04637|R-HSA-6804188|REACTANT", "source": "P04637", "target": "R-HSA-6804188", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "TP53 gene", "cite": "reaction:R-HSA-6804188", "claims": [], "cited": false}, {"id": "P04637|R-HSA-6789960|REACTANT", "source": "P04637", "target": "R-HSA-6789960", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "NDN gene, TP53 gene", "cite": "reaction:R-HSA-6789960", "claims": [], "cited": false}, {"id": "R-HSA-6805103|P04637|PRODUCT", "source": "R-HSA-6805103", "target": "P04637", "returned_by": ["gene_reactions", "reaction_details"], "rel": "PRODUCT", "via": "p-S315-TP53 Tetramer", "cite": "reaction:R-HSA-6805103", "claims": [], "cited": false}, {"id": "Q00987|R-HSA-6804879|CATALYST", "source": "Q00987", "target": "R-HSA-6804879", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "Q00987|R-HSA-6804879|INHIBITOR", "source": "Q00987", "target": "R-HSA-6804879", "returned_by": ["gene_reactions", "reaction_details"], "rel": "INHIBITOR", "via": "p14ARF:p-S166,S188-MDM2 dimer,p-S166,S188-MDM2:MDM4", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "Q00987|R-HSA-6804879|REACTANT", "source": "Q00987", "target": "R-HSA-6804879", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "R-HSA-6804879|P04637|PRODUCT", "source": "R-HSA-6804879", "target": "P04637", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "PolyUb-TP53 Tetramer", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "R-HSA-6804879|Q00987|PRODUCT", "source": "R-HSA-6804879", "target": "Q00987", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2:MDM4", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "R-HSA-6804879|O15151|PRODUCT", "source": "R-HSA-6804879", "target": "O15151", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2:MDM4", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "O15151|R-HSA-6804879|CATALYST", "source": "O15151", "target": "R-HSA-6804879", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "O15151|R-HSA-6804879|INHIBITOR", "source": "O15151", "target": "R-HSA-6804879", "returned_by": ["gene_reactions", "reaction_details"], "rel": "INHIBITOR", "via": "p14ARF:p-S166,S188-MDM2 dimer,p-S166,S188-MDM2:MDM4", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "O15151|R-HSA-6804879|REACTANT", "source": "O15151", "target": "R-HSA-6804879", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "group:+33 Gene|R-HSA-8852354|CATALYST", "source": "group:+33 Gene", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "R-HSA-8852354|P62979|PRODUCT", "source": "R-HSA-8852354", "target": "P62979", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "Ub", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "R-HSA-8852354|group:+33 Gene|PRODUCT", "source": "R-HSA-8852354", "target": "group:+33 Gene", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "Ub", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "R-HSA-8852354|P0CG47|PRODUCT", "source": "R-HSA-8852354", "target": "P0CG47", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "Ub", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "R-HSA-8852354|P0CG48|PRODUCT", "source": "R-HSA-8852354", "target": "P0CG48", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "Ub", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "R-HSA-8852354|Q9NYZ3|PRODUCT", "source": "R-HSA-8852354", "target": "Q9NYZ3", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "p-S435-GTSE1", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "O14965|R-HSA-6805103|CATALYST", "source": "O14965", "target": "R-HSA-6805103", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "p-T288-AURKA:TPX2", "cite": "reaction:R-HSA-6805103", "claims": [], "cited": false}, {"id": "Q96GD4|R-HSA-6805126|CATALYST", "source": "Q96GD4", "target": "R-HSA-6805126", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "AURKB:NOC2L:p-S15,S20-TP53", "cite": "reaction:R-HSA-6805126", "claims": [], "cited": false}, {"id": "Q96GD4|R-HSA-6805126|REACTANT", "source": "Q96GD4", "target": "R-HSA-6805126", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "AURKB:NOC2L:p-S15,S20-TP53", "cite": "reaction:R-HSA-6805126", "claims": [], "cited": false}, {"id": "R-HSA-6805126|Q96GD4|PRODUCT", "source": "R-HSA-6805126", "target": "Q96GD4", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "AURKB:NOC2L:p-S15,S20,S269,T284-TP53", "cite": "reaction:R-HSA-6805126", "claims": [], "cited": false}, {"id": "R-HSA-6805126|Q9Y3T9|PRODUCT", "source": "R-HSA-6805126", "target": "Q9Y3T9", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "AURKB:NOC2L:p-S15,S20,S269,T284-TP53", "cite": "reaction:R-HSA-6805126", "claims": [], "cited": false}, {"id": "R-HSA-6805126|P04637|PRODUCT", "source": "R-HSA-6805126", "target": "P04637", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "AURKB:NOC2L:p-S15,S20,S269,T284-TP53", "cite": "reaction:R-HSA-6805126", "claims": [], "cited": false}, {"id": "Q8N726|R-HSA-6804879|INHIBITOR", "source": "Q8N726", "target": "R-HSA-6804879", "returned_by": ["gene_reactions", "reaction_details"], "rel": "INHIBITOR", "via": "p14ARF:p-S166,S188-MDM2 dimer,p-S166,S188-MDM2:MDM4", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "Q9H9B1|R-HSA-6805755|CATALYST", "source": "Q9H9B1", "target": "R-HSA-6805755", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "EHMT1:EHMT2", "cite": "reaction:R-HSA-6805755", "claims": [], "cited": false}, {"id": "R-HSA-6805755|P04637|PRODUCT", "source": "R-HSA-6805755", "target": "P04637", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "Me2-K373-TP53 Tetramer", "cite": "reaction:R-HSA-6805755", "claims": [], "cited": false}, {"id": "Q96KQ7|R-HSA-6805755|CATALYST", "source": "Q96KQ7", "target": "R-HSA-6805755", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "EHMT1:EHMT2", "cite": "reaction:R-HSA-6805755", "claims": [], "cited": false}, {"id": "Q9NQR1|R-HSA-6805740|CATALYST", "source": "Q9NQR1", "target": "R-HSA-6805740", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "SETD8", "cite": "reaction:R-HSA-6805740", "claims": [], "cited": false}, {"id": "R-HSA-6805740|P04637|PRODUCT", "source": "R-HSA-6805740", "target": "P04637", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "Me-K382,p-S15,S20-TP53 Tetramer", "cite": "reaction:R-HSA-6805740", "claims": [], "cited": false}, {"id": "Q9Y3T9|R-HSA-6805126|CATALYST", "source": "Q9Y3T9", "target": "R-HSA-6805126", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "AURKB:NOC2L:p-S15,S20-TP53", "cite": "reaction:R-HSA-6805126", "claims": [], "cited": false}, {"id": "Q9Y3T9|R-HSA-6805126|REACTANT", "source": "Q9Y3T9", "target": "R-HSA-6805126", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "AURKB:NOC2L:p-S15,S20-TP53", "cite": "reaction:R-HSA-6805126", "claims": [], "cited": false}, {"id": "Q8WZ73|R-HSA-6804441|CATALYST", "source": "Q8WZ73", "target": "R-HSA-6804441", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "RNF34,RFFL", "cite": "reaction:R-HSA-6804441", "claims": [], "cited": false}, {"id": "R-HSA-6804441|P04637|PRODUCT", "source": "R-HSA-6804441", "target": "P04637", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "PolyUb,p-S15,S20-TP53 Tetramer", "cite": "reaction:R-HSA-6804441", "claims": [], "cited": false}, {"id": "Q969K3|R-HSA-6804441|CATALYST", "source": "Q969K3", "target": "R-HSA-6804441", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "RNF34,RFFL", "cite": "reaction:R-HSA-6804441", "claims": [], "cited": false}, {"id": "Q9NRG4|R-HSA-3222237|CATALYST", "source": "Q9NRG4", "target": "R-HSA-3222237", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "SMYD2", "cite": "reaction:R-HSA-3222237", "claims": [], "cited": false}, {"id": "R-HSA-3222237|P04637|PRODUCT", "source": "R-HSA-3222237", "target": "P04637", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "Me1-K370,p-S15,S20-TP53 Tetramer", "cite": "reaction:R-HSA-3222237", "claims": [], "cited": false}, {"id": "Q9ULW0|R-HSA-6805103|CATALYST", "source": "Q9ULW0", "target": "R-HSA-6805103", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "p-T288-AURKA:TPX2", "cite": "reaction:R-HSA-6805103", "claims": [], "cited": false}, {"id": "O75626|R-HSA-6804188|INHIBITOR", "source": "O75626", "target": "R-HSA-6804188", "returned_by": ["gene_reactions", "reaction_details"], "rel": "INHIBITOR", "via": "PRDM1:TP53 Gene", "cite": "reaction:R-HSA-6804188", "claims": [], "cited": false}, {"id": "O75626|P04637|ACTS_ON|R-HSA-6804188", "source": "O75626", "target": "P04637", "returned_by": ["gene_interactions"], "rel": "ACTS_ON", "sign": "negative", "mechanism": "regulation", "reaction": "PRDM1 represses TP53 expression", "reaction_id": "R-HSA-6804188", "cite": "edge:O75626-ACTS_ON->P04637@R-HSA-6804188", "claims": [9], "cited": true}, {"id": "R-HSA-6804188|P04637|PRODUCT", "source": "R-HSA-6804188", "target": "P04637", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "TP53", "cite": "reaction:R-HSA-6804188", "claims": [], "cited": false}, {"id": "P40763|R-HSA-6789960|INHIBITOR", "source": "P40763", "target": "R-HSA-6789960", "returned_by": ["gene_reactions", "reaction_details"], "rel": "INHIBITOR", "via": "p-Y705-STAT3 dimer", "cite": "reaction:R-HSA-6789960", "claims": [], "cited": false}, {"id": "R-HSA-6789960|Q99608|PRODUCT", "source": "R-HSA-6789960", "target": "Q99608", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "NDN, TP53", "cite": "reaction:R-HSA-6789960", "claims": [], "cited": false}, {"id": "R-HSA-6789960|P04637|PRODUCT", "source": "R-HSA-6789960", "target": "P04637", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "NDN, TP53", "cite": "reaction:R-HSA-6789960", "claims": [], "cited": false}, {"id": "P62979|R-HSA-6804441|REACTANT", "source": "P62979", "target": "R-HSA-6804441", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "Ub", "cite": "reaction:R-HSA-6804441", "claims": [], "cited": false}, {"id": "P62979|R-HSA-6804879|REACTANT", "source": "P62979", "target": "R-HSA-6804879", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "Ub", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "group:+33 Gene|R-HSA-6804441|REACTANT", "source": "group:+33 Gene", "target": "R-HSA-6804441", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "Ub", "cite": "reaction:R-HSA-6804441", "claims": [], "cited": false}, {"id": "group:+33 Gene|R-HSA-6804879|REACTANT", "source": "group:+33 Gene", "target": "R-HSA-6804879", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "Ub", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "P0CG47|R-HSA-6804441|REACTANT", "source": "P0CG47", "target": "R-HSA-6804441", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "Ub", "cite": "reaction:R-HSA-6804441", "claims": [], "cited": false}, {"id": "P0CG47|R-HSA-6804879|REACTANT", "source": "P0CG47", "target": "R-HSA-6804879", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "Ub", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "P0CG48|R-HSA-6804441|REACTANT", "source": "P0CG48", "target": "R-HSA-6804441", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "Ub", "cite": "reaction:R-HSA-6804441", "claims": [], "cited": false}, {"id": "P0CG48|R-HSA-6804879|REACTANT", "source": "P0CG48", "target": "R-HSA-6804879", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "Ub", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "Q9NYZ3|R-HSA-8852354|REACTANT", "source": "Q9NYZ3", "target": "R-HSA-8852354", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "p-S435-GTSE1:PolyUb-TP53 Tetramer", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "Q99608|R-HSA-6789960|REACTANT", "source": "Q99608", "target": "R-HSA-6789960", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "NDN gene, TP53 gene", "cite": "reaction:R-HSA-6789960", "claims": [], "cited": false}, {"id": "qdrant:Q00987#0|Q00987|describes", "source": "qdrant:Q00987#0", "target": "Q00987", "returned_by": ["read_snippets"], "rel": "describes", "cite": "qdrant:Q00987#0", "claims": [], "cited": false}, {"id": "qdrant:O15151#0|O15151|describes", "source": "qdrant:O15151#0", "target": "O15151", "returned_by": ["read_snippets"], "rel": "describes", "cite": "qdrant:O15151#0", "claims": [], "cited": false}, {"id": "qdrant:O15151#2|O15151|describes", "source": "qdrant:O15151#2", "target": "O15151", "returned_by": ["read_snippets"], "rel": "describes", "cite": "qdrant:O15151#2", "claims": [], "cited": false}, {"id": "qdrant:Q969K3#3|Q969K3|describes", "source": "qdrant:Q969K3#3", "target": "Q969K3", "returned_by": ["read_snippets"], "rel": "describes", "cite": "qdrant:Q969K3#3", "claims": [], "cited": false}, {"id": "qdrant:O14965#10|O14965|describes", "source": "qdrant:O14965#10", "target": "O14965", "returned_by": ["read_snippets"], "rel": "describes", "cite": "qdrant:O14965#10", "claims": [], "cited": false}, {"id": "qdrant:Q96GD4#11|Q96GD4|describes", "source": "qdrant:Q96GD4#11", "target": "Q96GD4", "returned_by": ["read_snippets"], "rel": "describes", "cite": "qdrant:Q96GD4#11", "claims": [], "cited": false}, {"id": "qdrant:Q9NRG4#3|Q9NRG4|describes", "source": "qdrant:Q9NRG4#3", "target": "Q9NRG4", "returned_by": ["read_snippets"], "rel": "describes", "cite": "qdrant:Q9NRG4#3", "claims": [], "cited": false}, {"id": "qdrant:Q9NQR1#7|Q9NQR1|describes", "source": "qdrant:Q9NQR1#7", "target": "Q9NQR1", "returned_by": ["read_snippets"], "rel": "describes", "cite": "qdrant:Q9NQR1#7", "claims": [], "cited": false}, {"id": "qdrant:Q9H9B1#9|Q9H9B1|describes", "source": "qdrant:Q9H9B1#9", "target": "Q9H9B1", "returned_by": ["read_snippets"], "rel": "describes", "cite": "qdrant:Q9H9B1#9", "claims": [], "cited": false}], "group_members": {"group:+33 Gene": [{"id": "P62987", "kind": "entity", "label": "Gene", "name": "UBA52", "cite": "P62987", "returned_by": ["reaction_details"], "mentions": 3, "source": "neo4j", "text": null, "cited": false, "claims": [0, 1, 2, 3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "O00231", "kind": "entity", "label": "Gene", "name": "PSMD11", "cite": "O00231", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "O00232", "kind": "entity", "label": "Gene", "name": "PSMD12", "cite": "O00232", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "O00487", "kind": "entity", "label": "Gene", "name": "PSMD14", "cite": "O00487", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "O14818", "kind": "entity", "label": "Gene", "name": "PSMA7", "cite": "O14818", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "O43242", "kind": "entity", "label": "Gene", "name": "PSMD3", "cite": "O43242", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P17980", "kind": "entity", "label": "Gene", "name": "PSMC3", "cite": "P17980", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P20618", "kind": "entity", "label": "Gene", "name": "PSMB1", "cite": "P20618", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P25786", "kind": "entity", "label": "Gene", "name": "PSMA1", "cite": "P25786", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P25787", "kind": "entity", "label": "Gene", "name": "PSMA2", "cite": "P25787", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P25788", "kind": "entity", "label": "Gene", "name": "PSMA3", "cite": "P25788", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P25789", "kind": "entity", "label": "Gene", "name": "PSMA4", "cite": "P25789", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P28066", "kind": "entity", "label": "Gene", "name": "PSMA5", "cite": "P28066", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P28070", "kind": "entity", "label": "Gene", "name": "PSMB4", "cite": "P28070", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P28072", "kind": "entity", "label": "Gene", "name": "PSMB6", "cite": "P28072", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P28074", "kind": "entity", "label": "Gene", "name": "PSMB5", "cite": "P28074", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P35998", "kind": "entity", "label": "Gene", "name": "PSMC2", "cite": "P35998", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P43686", "kind": "entity", "label": "Gene", "name": "PSMC4", "cite": "P43686", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P48556", "kind": "entity", "label": "Gene", "name": "PSMD8", "cite": "P48556", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P49720", "kind": "entity", "label": "Gene", "name": "PSMB3", "cite": "P49720", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P49721", "kind": "entity", "label": "Gene", "name": "PSMB2", "cite": "P49721", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P51665", "kind": "entity", "label": "Gene", "name": "PSMD7", "cite": "P51665", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P60896", "kind": "entity", "label": "Gene", "name": "SEM1", "cite": "P60896", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P60900", "kind": "entity", "label": "Gene", "name": "PSMA6", "cite": "P60900", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P62191", "kind": "entity", "label": "Gene", "name": "PSMC1", "cite": "P62191", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P62195", "kind": "entity", "label": "Gene", "name": "PSMC5", "cite": "P62195", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "P62333", "kind": "entity", "label": "Gene", "name": "PSMC6", "cite": "P62333", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "Q13200", "kind": "entity", "label": "Gene", "name": "PSMD2", "cite": "Q13200", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "Q15008", "kind": "entity", "label": "Gene", "name": "PSMD6", "cite": "Q15008", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "Q16186", "kind": "entity", "label": "Gene", "name": "ADRM1", "cite": "Q16186", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "Q99436", "kind": "entity", "label": "Gene", "name": "PSMB7", "cite": "Q99436", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "Q99460", "kind": "entity", "label": "Gene", "name": "PSMD1", "cite": "Q99460", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}, {"id": "Q9UNM6", "kind": "entity", "label": "Gene", "name": "PSMD13", "cite": "Q9UNM6", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 2, "source": "neo4j", "text": null, "cited": false, "claims": [3], "theme": "Degradation", "group": "group:+33 Gene"}]}, "group_edges": [{"id": "Q16186|R-HSA-8852354|CATALYST", "source": "Q16186", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "R-HSA-8852354|P62987|PRODUCT", "source": "R-HSA-8852354", "target": "P62987", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "Ub", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P25786|R-HSA-8852354|CATALYST", "source": "P25786", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P25787|R-HSA-8852354|CATALYST", "source": "P25787", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P25788|R-HSA-8852354|CATALYST", "source": "P25788", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P25789|R-HSA-8852354|CATALYST", "source": "P25789", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P28066|R-HSA-8852354|CATALYST", "source": "P28066", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P60900|R-HSA-8852354|CATALYST", "source": "P60900", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "O14818|R-HSA-8852354|CATALYST", "source": "O14818", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P20618|R-HSA-8852354|CATALYST", "source": "P20618", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P49721|R-HSA-8852354|CATALYST", "source": "P49721", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P49720|R-HSA-8852354|CATALYST", "source": "P49720", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P28070|R-HSA-8852354|CATALYST", "source": "P28070", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P28074|R-HSA-8852354|CATALYST", "source": "P28074", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P28072|R-HSA-8852354|CATALYST", "source": "P28072", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "Q99436|R-HSA-8852354|CATALYST", "source": "Q99436", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P62191|R-HSA-8852354|CATALYST", "source": "P62191", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P35998|R-HSA-8852354|CATALYST", "source": "P35998", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P17980|R-HSA-8852354|CATALYST", "source": "P17980", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P43686|R-HSA-8852354|CATALYST", "source": "P43686", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P62195|R-HSA-8852354|CATALYST", "source": "P62195", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P62333|R-HSA-8852354|CATALYST", "source": "P62333", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "Q99460|R-HSA-8852354|CATALYST", "source": "Q99460", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "O00231|R-HSA-8852354|CATALYST", "source": "O00231", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "O00232|R-HSA-8852354|CATALYST", "source": "O00232", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "Q9UNM6|R-HSA-8852354|CATALYST", "source": "Q9UNM6", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "O00487|R-HSA-8852354|CATALYST", "source": "O00487", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "Q13200|R-HSA-8852354|CATALYST", "source": "Q13200", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "O43242|R-HSA-8852354|CATALYST", "source": "O43242", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "Q15008|R-HSA-8852354|CATALYST", "source": "Q15008", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P51665|R-HSA-8852354|CATALYST", "source": "P51665", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P48556|R-HSA-8852354|CATALYST", "source": "P48556", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P60896|R-HSA-8852354|CATALYST", "source": "P60896", "target": "R-HSA-8852354", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "26S proteasome", "cite": "reaction:R-HSA-8852354", "claims": [], "cited": false}, {"id": "P62987|R-HSA-6804441|REACTANT", "source": "P62987", "target": "R-HSA-6804441", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "Ub", "cite": "reaction:R-HSA-6804441", "claims": [], "cited": false}, {"id": "P62987|R-HSA-6804879|REACTANT", "source": "P62987", "target": "R-HSA-6804879", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "Ub", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}], "unknown": [], "overflow": 33, "view_id": "v1", "question": 1};</script>
+<script>
+// ============================================================================
+// Transport. Two modes from one file:
+//   in a host (Claude Desktop): MCP Apps (ext-apps 2026-01-26), JSON-RPC over
+//     postMessage; the tool result carries a view id and the full view is
+//     fetched through the app-only evidence_view_data tool
+//   standalone (/evidence/<session>/<view>): the view is embedded as
+//     window.__EVIDENCE__ and there is no host
+// ============================================================================
+const PROTOCOL = "2026-01-26";
+const STANDALONE = typeof window.__EVIDENCE__ === "object" && window.__EVIDENCE__ !== null;
+let host = { capabilities: {}, context: {} };
+let nextId = 1;
+const pending = new Map();
+const $ = (id) => document.getElementById(id);
+const send = (msg) => window.parent.postMessage({ jsonrpc: "2.0", ...msg }, "*");
+const request = (method, params) => new Promise((resolve, reject) => {
+  const id = nextId++; pending.set(id, { resolve, reject }); send({ id, method, params });
+});
+const notify = (method, params) => { if (!STANDALONE) send({ method, params }); };
+
+if (!STANDALONE) {
+  window.addEventListener("message", (ev) => {
+    const m = ev.data;
+    if (!m || m.jsonrpc !== "2.0") return;
+    if (m.id !== undefined && pending.has(m.id)) {
+      const p = pending.get(m.id); pending.delete(m.id);
+      return m.error ? p.reject(m.error) : p.resolve(m.result);
+    }
+    if (m.method === "ui/notifications/tool-result") onToolResult(m.params);
+    if (m.method === "ui/notifications/host-context-changed") onContext(m.params);
+  });
+  request("ui/initialize", { appInfo: { name: "pathwayoracle-evidence", version: "0.3.0" },
+                             appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
+                             protocolVersion: PROTOCOL })
+    .then((res) => {
+      host = { capabilities: res.hostCapabilities || {}, context: res.hostContext || {} };
+      onContext(host.context);
+      notify("ui/notifications/initialized", {});
+    })
+    .catch((e) => { $("status").textContent = "Could not connect to the host: " + JSON.stringify(e); });
+  new ResizeObserver(() => notify("ui/notifications/size-changed",
+    { height: Math.ceil(document.documentElement.scrollHeight) })).observe(document.body);
+}
+
+function onContext(ctx) {
+  if (!ctx) return;
+  host.context = { ...host.context, ...ctx };
+  const modes = host.context.availableDisplayModes || [];
+  $("b-full").hidden = !modes.includes("fullscreen");
+  if (host.context.displayMode) document.body.classList.toggle("fullscreen", host.context.displayMode === "fullscreen");
+}
+
+// The model-visible result carries only a view id; the graph comes through the
+// app-only evidence_view_data tool, so it never enters the model's context.
+async function onToolResult(result) {
+  const sc = result && result.structuredContent;
+  if (!sc || !sc.view_id) { $("status").textContent = (sc && sc.error) || "No view in this result."; return; }
+  $("status").textContent = sc.receipt || "";
+  try {
+    const res = await request("tools/call", { name: "evidence_view_data", arguments: { view_id: sc.view_id } });
+    const view = res && (res.structuredContent || JSON.parse((res.content || [{}])[0].text || "{}"));
+    if (!view || view.error) throw new Error((view && view.error) || "empty view");
+    draw(view);
+  } catch (e) {
+    $("status").textContent = "Could not load view " + sc.view_id + ": " + (e.message || JSON.stringify(e));
+  }
+}
+
+// ============================================================================
+// Libraries: Cytoscape (cdnjs) + WebCola/cytoscape-cola (jsDelivr) for physics.
+// ============================================================================
+const LIBS = ["https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.34.3/cytoscape.min.js",
+              "https://cdn.jsdelivr.net/npm/webcola@3.4.0/WebCola/cola.min.js",
+              "https://cdn.jsdelivr.net/npm/cytoscape-cola@2.5.1/cytoscape-cola.js"];
+const load = (src) => new Promise((ok, no) => { const s = document.createElement("script");
+  s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s); });
+const libs = load(LIBS[0]).then(() => load(LIBS[1]).then(() => load(LIBS[2])).then(() => true).catch(() => false));
+
+// ============================================================================
+// Drawing
+// ============================================================================
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const CATEGORIES = [
+  ["gene", "gene", "--gene"], ["reaction", "reaction", "--rxn"], ["pathway", "pathway", "--pathway"],
+  ["go", "GO term", "--go"], ["entity", "complex / other", "--entity"], ["passage", "function text", "--passage"],
+  ["abstract", "abstract", "--abstract"], ["derived", "derived / group", "--agg"],
+];
+function categoryOf(n) {
+  if (n.kind === "evidence") return n.label === "abstract" ? "abstract" : "passage";
+  if (n.kind === "aggregate" || n.kind === "group") return "derived";
+  return { Gene: "gene", Reaction: "reaction", Pathway: "pathway", Ontology: "go" }[n.label] || "entity";
+}
+const colorOf = (n) => css(CATEGORIES.find((c) => c[0] === categoryOf(n))[2]);
+const shapeOf = (n) => n.kind === "evidence" ? "tag" : n.kind === "aggregate" ? "diamond"
+  : n.kind === "group" ? "round-octagon" : n.label === "Reaction" ? "round-rectangle" : "ellipse";
+const short = (s) => { s = String(s || ""); return s.length > 28 ? s.slice(0, 27) + "…" : s; };
+
+let cy = null, view = null, layout = null, physicsOn = true, pinnedClaim = null;
+const hiddenCats = new Set();
+
+function nodeEl(n) {
+  const data = { ...n, color: colorOf(n), shape: shapeOf(n), cat: categoryOf(n), short: short(n.name || n.id) };
+  if (n.theme) data.parent = themeId(n.theme);       // drawn inside its theme's box
+  return { group: "nodes", data };
+}
+const themeId = (name) => "theme:" + name;
+function themeEls(v) {
+  return (v.themes || []).map((t) => ({ group: "nodes",
+    data: { id: themeId(t.name), kind: "theme", name: t.name, short: t.name, claims: t.claims,
+            source: t.source || "model" } }));
+}
+function edgeEl(e) { return { group: "edges", data: { ...e } }; }
+
+function draw(v) {
+  view = v;
+  drawClaims(v);
+  drawLegend();
+  const notes = [];
+  if (v.overflow) notes.push(`${v.overflow} more nodes folded into groups — click a group to open it.`);
+  if (v.unknown && v.unknown.length) notes.push(`Not retrieved this session: ${v.unknown.join(", ")}.`);
+  notes.push(`Release ${v.release || "?"} · view ${v.view_id}`);
+  $("notes").textContent = notes.join(" ");
+  $("b-open").hidden = STANDALONE || !v.standalone_url || !host.capabilities.openLinks;
+
+  libs.then((cola) => {
+    if (!window.cytoscape) { $("status").textContent += " (graph library blocked)"; return; }
+    const holder = document.createElement("div"); holder.style.cssText = "position:absolute;inset:0";
+    $("graph").appendChild(holder);
+    cy = window.cy = cytoscape({
+      container: holder,
+      elements: [...themeEls(v), ...v.nodes.map(nodeEl), ...v.edges.map(edgeEl)],
+      style: [
+        { selector: "node", style: { "label": "data(short)", "background-color": "data(color)", "shape": "data(shape)",
+          "color": css("--fg"), "font-size": 10, "text-valign": "bottom", "text-margin-y": 3,
+          "width": 20, "height": 20, "border-width": 0 } },
+        { selector: "node[?cited]", style: { "border-width": 2, "border-color": css("--fg"), "width": 26, "height": 26 } },
+        { selector: "node[status = 'referenced']", style: { "border-width": 2, "border-style": "dashed", "border-color": css("--warn"), "background-opacity": 0.45 } },
+        { selector: "node[kind = 'group']", style: { "border-style": "dashed", "border-width": 2, "border-color": css("--muted"), "width": 30, "height": 30 } },
+        { selector: "edge", style: { "curve-style": "bezier", "target-arrow-shape": "triangle", "width": 1.3,
+          "line-color": css("--line"), "target-arrow-color": css("--line"), "arrow-scale": 0.8,
+          "font-size": 8, "color": css("--muted"), "text-rotation": "autorotate" } },
+        // Labels only on cited edges -- the rest name their relation on hover and
+        // in the details pane, which keeps dense hubs (e.g. TP53) legible.
+        { selector: "edge[?cited]", style: { "label": "data(rel)", "color": css("--fg") } },
+        { selector: "edge[rel = 'in_entity']", style: { "line-style": "dotted", "target-arrow-shape": "none", "width": 1 } },
+        { selector: "edge[sign = 'negative']", style: { "line-color": css("--neg"), "target-arrow-color": css("--neg") } },
+        { selector: "edge[sign = 'positive']", style: { "line-color": css("--pos"), "target-arrow-color": css("--pos") } },
+        { selector: "edge[?cited]", style: { "width": 2.6 } },
+        { selector: "node[kind = 'theme']", style: { "shape": "round-rectangle", "background-color": css("--panel"),
+          "background-opacity": 0.6, "border-width": 1, "border-color": css("--line"), "label": "data(name)",
+          "text-valign": "top", "text-halign": "center", "font-size": 11, "font-weight": 600, "color": css("--muted"),
+          "padding": 14 } },
+        // Where a theme comes from: solid accent = a grouping from the database,
+        // dashed = the model's own grouping.
+        { selector: "node[kind = 'theme'][source = 'database']", style: { "border-color": css("--accent"), "border-width": 1.5 } },
+        { selector: "node[kind = 'theme'][source = 'model']", style: { "border-style": "dashed" } },
+        { selector: ".dim", style: { "opacity": 0.12 } },
+        { selector: ".hl", style: { "border-width": 3, "border-color": css("--hl"), "line-color": css("--hl"), "target-arrow-color": css("--hl") } },
+        { selector: ".sel", style: { "border-width": 3, "border-color": css("--accent") } },
+      ],
+      layout: { name: "preset" }, minZoom: 0.2, maxZoom: 3,
+    });
+    wireInteractions();
+    cy.layout({ name: "circle", fit: true, padding: 30 }).run();
+    relayout(cola, true);
+  });
+}
+
+function relayout(cola, first) {
+  if (layout) layout.stop();
+  if (cola && window.cytoscape) {
+    layout = cy.elements(":visible").layout({ name: "cola", infinite: physicsOn, animate: true, fit: false,
+      randomize: false, avoidOverlap: true, handleDisconnected: true, nodeSpacing: () => 14,
+      edgeLength: (e) => (["describes", "cites"].includes(e.data("rel")) ? 70 : 115) });
+    layout.run();
+    if (first) setTimeout(() => cy.fit(undefined, 30), 900);
+  } else {
+    layout = cy.elements(":visible").layout({ name: "cose", animate: true, animationDuration: 800, padding: 24 });
+    layout.run();
+  }
+}
+
+// --- claims --------------------------------------------------------------------
+function drawClaims(v) {
+  const box = $("claims"); box.innerHTML = "";
+  if (!v.claims.length) { box.innerHTML = `<div class="cites">No claims — scope "${esc(v.scope)}".</div>`; }
+  // Claims under their themes, in the order the themes were first used.
+  const order = [...(v.themes || []).map((t) => t.name), null];
+  const ordered = order.flatMap((name) => v.claims.filter((c) => (c.theme || null) === name));
+  let lastTheme;
+  for (const c of ordered) {
+    if ((c.theme || null) !== lastTheme && (v.themes || []).length) {
+      lastTheme = c.theme || null;
+      const h = document.createElement("h2");
+      h.textContent = lastTheme || "Other claims";
+      h.style.marginTop = "10px";
+      const theme = lastTheme && (v.themes.find((t) => t.name === lastTheme) || {});
+      if (theme) {
+        const db = theme.source === "database";
+        h.insertAdjacentHTML("beforeend", ` <span class="badge src ${db ? "database" : "model"}">${db ? "from database" : "model's grouping"}</span>`);
+      }
+      if (lastTheme) {
+        h.style.cursor = "pointer";
+        const idx = (v.themes.find((t) => t.name === lastTheme) || {}).claims || [];
+        h.addEventListener("mouseenter", () => { if (pinnedClaim === null) highlightMany(idx); });
+        h.addEventListener("mouseleave", () => { if (pinnedClaim === null) highlight(null); });
+      }
+      box.appendChild(h);
+      if (theme && theme.source === "database" && (theme.basis || []).length) {
+        const b = document.createElement("div");
+        b.className = "basis";
+        b.textContent = theme.basis.map((x) => `${x.name || x.cite}` + (x.returned_by && x.returned_by.length ? ` (${x.returned_by.join(", ")})` : "")).join(" · ");
+        box.appendChild(b);
+      }
+    }
+    const d = document.createElement("div");
+    d.className = "claim"; d.dataset.i = c.i;
+    const weak = Object.entries(c.cites).filter(([, s]) => s !== "fetched");
+    d.innerHTML = `<span class="n">${c.i + 1}.</span>${esc(c.label)}<span class="badge ${c.status}">${c.status}</span>` +
+      `<div class="cites">${Object.keys(c.cites).map(esc).join(" · ")}</div>` +
+      (weak.length ? `<div class="cites">${weak.map(([k, s]) => `<span class="${s}">${esc(k)}: ${s === "referenced" ? "seen, never read" : "not retrieved"}</span>`).join("; ")}</div>` : "");
+    d.addEventListener("mouseenter", () => { if (pinnedClaim === null) highlight(c.i); });
+    d.addEventListener("mouseleave", () => { if (pinnedClaim === null) highlight(null); });
+    d.addEventListener("click", () => pinClaim(c.i));
+    box.appendChild(d);
+  }
+}
+function pinClaim(i) {
+  pinnedClaim = pinnedClaim === i ? null : i;
+  document.querySelectorAll(".claim").forEach((el) => el.classList.toggle("pinned", Number(el.dataset.i) === pinnedClaim));
+  highlight(pinnedClaim);
+  if (pinnedClaim !== null && cy) {
+    const hit = cy.elements().filter((el) => (el.data("claims") || []).includes(pinnedClaim));
+    if (hit.length) cy.animate({ fit: { eles: hit, padding: 60 }, duration: 350 });
+  }
+}
+function highlightMany(indexes) {
+  if (!cy) return;
+  cy.elements().removeClass("dim hl");
+  const hit = cy.elements().filter((el) => (el.data("claims") || []).some((k) => indexes.includes(k)));
+  cy.elements().not(hit).not("node[kind = 'theme']").addClass("dim");
+  hit.addClass("hl");
+}
+function highlight(i) {
+  if (!cy) return;
+  cy.elements().removeClass("dim hl");
+  if (i === null) return;
+  const hit = cy.elements().filter((el) => (el.data("claims") || []).includes(i));
+  cy.elements().not(hit).not("node[kind = 'theme']").addClass("dim");
+  hit.addClass("hl");
+}
+
+// --- legend (click to hide / show a category) -----------------------------------
+function drawLegend() {
+  const box = $("legend"); box.innerHTML = "";
+  for (const [key, label, color] of CATEGORIES) {
+    const s = document.createElement("span");
+    s.innerHTML = `<i style="background:var(${color})"></i>${label}`;
+    s.title = "Click to hide or show";
+    s.addEventListener("click", () => {
+      hiddenCats.has(key) ? hiddenCats.delete(key) : hiddenCats.add(key);
+      s.classList.toggle("off", hiddenCats.has(key));
+      if (cy) cy.nodes().forEach((n) => n.style("display", hiddenCats.has(n.data("cat")) ? "none" : "element"));
+    });
+    box.appendChild(s);
+  }
+  const signs = document.createElement("span");
+  signs.style.cursor = "default";
+  signs.innerHTML = `edges: <b style="color:var(--neg)">negative</b> / <b style="color:var(--pos)">positive</b> · thick = cited · dashed = seen, never read` +
+    `<br>theme boxes: <b style="color:var(--accent)">solid</b> = grouping from the database · dashed = the model's own grouping`;
+  box.appendChild(signs);
+}
+
+// --- hover, click, details, group expansion -----------------------------------------
+function wireInteractions() {
+  const tip = $("tip");
+  const place = (p) => { tip.style.left = Math.max(4, Math.min(p.x + 12, $("graph").clientWidth - 370)) + "px";
+                         tip.style.top = (p.y + 12) + "px"; tip.style.display = "block"; };
+  cy.on("mouseover", "node", (ev) => {
+    const n = ev.target.data();
+    tip.innerHTML = `<b>${esc(n.name)}</b>${n.kind === "group" ? "click to expand\n" : ""}${n.text ? esc(n.text.slice(0, 260)) + (n.text.length > 260 ? "…" : "") : ""}`;
+    place(ev.renderedPosition);
+  });
+  cy.on("mouseover", "edge", (ev) => {
+    const e = ev.target.data();
+    tip.innerHTML = `<b>${esc(e.rel)}</b>${esc([e.mechanism, e.sign, e.reaction].filter(Boolean).join(" · "))}`;
+    place(ev.renderedPosition || ev.position);
+  });
+  cy.on("mouseout", "node, edge", () => { tip.style.display = "none"; });
+  cy.on("grab", "node", () => { tip.style.display = "none"; });
+  cy.on("tap", "node", (ev) => {
+    const n = ev.target.data();
+    if (n.kind === "group") return expandGroup(n.id);
+    showDetails(n, "node");
+    cy.elements().removeClass("sel"); ev.target.addClass("sel");
+  });
+  cy.on("tap", "edge", (ev) => { showDetails(ev.target.data(), "edge"); cy.elements().removeClass("sel"); ev.target.addClass("sel"); });
+  cy.on("tap", (ev) => { if (ev.target === cy) { $("details").style.display = "none"; cy.elements().removeClass("sel"); } });
+}
+
+function showDetails(x, type) {
+  const box = $("details");
+  const claims = (x.claims || []).map((i) => `#${i + 1}`).join(", ");
+  const trail = (x.returned_by || []).join(" → ");
+  if (type === "node") {
+    box.innerHTML = `<h3>${esc(x.name)}</h3>
+      <div class="meta">${esc(x.label || x.kind)} · source ${esc(x.source || "-")}${x.status ? ` · <span class="${x.status}">${x.status === "referenced" ? "seen, never read" : "read"}</span>` : ""}${claims ? ` · supports claim ${claims}` : ""}</div>
+      ${x.text ? `<div class="text">${esc(x.text)}</div>` : ""}
+      <div class="meta" style="margin-top:6px">cite <code>${esc(x.cite || x.id)}</code>${trail ? ` · returned by ${esc(trail)}` : ""}</div>`;
+  } else {
+    const bits = [x.mechanism, x.sign, x.reaction && `reaction: ${x.reaction}`, x.via && `via ${x.via}`,
+                  x.evidence && `evidence ${x.evidence.join(", ")}`].filter(Boolean);
+    box.innerHTML = `<h3>${esc(x.rel)}: ${esc(nameOf(x.source))} → ${esc(nameOf(x.target))}</h3>
+      <div class="meta">${esc(bits.join(" · "))}${claims ? ` · supports claim ${claims}` : ""}</div>
+      ${x.sentence ? `<div class="text">${esc(x.sentence)}</div>` : ""}
+      <div class="meta" style="margin-top:6px">${x.cite ? `cite <code>${esc(x.cite)}</code>` : ""}${trail ? ` · returned by ${esc(trail)}` : ""}</div>`;
+  }
+  box.style.display = "block";
+}
+const nameOf = (id) => { const n = cy && cy.getElementById(id); return n && n.length ? n.data("name") : id; };
+
+function expandGroup(gid) {
+  const members = (view.group_members || {})[gid] || [];
+  if (!members.length) return;
+  const g = cy.getElementById(gid);
+  const at = g.position();
+  cy.batch(() => {
+    for (const m of members) {
+      if (cy.getElementById(m.id).length) continue;
+      const el = cy.add(nodeEl(m));
+      el.position({ x: at.x + (Math.random() - 0.5) * 80, y: at.y + (Math.random() - 0.5) * 80 });
+      if (hiddenCats.has(el.data("cat"))) el.style("display", "none");
+    }
+    g.remove();
+    // Re-add every original edge whose endpoints are now visible; endpoints still
+    // inside another group point at that group.
+    const groupOf = {};
+    for (const [id, ms] of Object.entries(view.group_members || {})) {
+      if (cy.getElementById(id).length) ms.forEach((m) => { groupOf[m.id] = id; });
+    }
+    for (const e of view.group_edges || []) {
+      const s = cy.getElementById(e.source).length ? e.source : groupOf[e.source];
+      const t = cy.getElementById(e.target).length ? e.target : groupOf[e.target];
+      const id = `${s}|${t}|${e.rel}|${e.reaction_id || ""}`;
+      if (!s || !t || s === t || cy.getElementById(e.id).length || cy.getElementById(id).length) continue;
+      cy.add(edgeEl({ ...e, id, source: s, target: t }));
+    }
+  });
+  libs.then((cola) => relayout(cola, false));
+}
+
+// --- toolbar --------------------------------------------------------------------
+$("b-fit").addEventListener("click", () => cy && cy.animate({ fit: { padding: 30 }, duration: 300 }));
+$("b-phys").addEventListener("click", () => {
+  physicsOn = !physicsOn;
+  $("b-phys").textContent = physicsOn ? "Pause physics" : "Resume physics";
+  if (!physicsOn) { if (layout) layout.stop(); } else libs.then((cola) => relayout(cola, false));
+});
+$("b-full").addEventListener("click", async () => {
+  const want = host.context.displayMode === "fullscreen" ? "inline" : "fullscreen";
+  try {
+    const res = await request("ui/request-display-mode", { mode: want });
+    onContext({ displayMode: (res && res.mode) || want });
+    $("b-full").textContent = host.context.displayMode === "fullscreen" ? "Exit fullscreen" : "Fullscreen";
+    setTimeout(() => cy && cy.resize() && cy.fit(undefined, 30), 300);
+  } catch (_) { $("b-full").hidden = true; }
+});
+$("b-open").addEventListener("click", () => request("ui/open-link", { url: view.standalone_url }).catch(() => {}));
+
+function b64(str) { return btoa(unescape(encodeURIComponent(str))); }
+async function download(name, mime, base64) {
+  if (!STANDALONE && host.capabilities.downloadFile) {
+    try {
+      await request("ui/download-file", { contents: [{ type: "resource",
+        resource: { uri: `file:///${name}`, mimeType: mime, blob: base64 } }] });
+      return;
+    } catch (_) { /* fall through to a plain link */ }
+  }
+  const a = document.createElement("a");
+  a.href = `data:${mime};base64,${base64}`; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+}
+$("b-png").addEventListener("click", () => cy && download(`evidence-${view.view_id}.png`, "image/png",
+  cy.png({ output: "base64", full: true, scale: 2, bg: css("--bg") })));
+$("b-json").addEventListener("click", () => view && download(`evidence-${view.view_id}.json`, "application/json",
+  b64(JSON.stringify(view, null, 1))));
+
+// Standalone start goes LAST: draw() uses `libs`, `cy`, `view`, ... which are
+// only initialised once the whole script has run.
+if (STANDALONE) {
+  document.title = `Evidence ${window.__EVIDENCE__.view_id || ""}`;
+  $("status").textContent = `Standalone view ${window.__EVIDENCE__.view_id} · session ${window.__EVIDENCE__.session}`;
+  draw(window.__EVIDENCE__);
+}
+</script>
+</body>
+</html>

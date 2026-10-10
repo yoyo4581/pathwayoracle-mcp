@@ -1,0 +1,2099 @@
+[
+ {
+  "tool": "plan",
+  "arguments": {
+   "recipe": "mechanistic"
+  },
+  "result": {
+   "recipe": "mechanistic",
+   "description": "How entities regulate or affect one another -- directly, or through a chain of interactions.",
+   "scope": "Report interactions as the graph records them, mechanism and sign per hop. A sign is the regulator's effect on a REACTION: read it against reaction_details before stating an effect on the target, and combine signs explicitly along a chain. Evidence per interaction, not background.",
+   "how_to_use": "These are the steps this kind of question usually needs, in the usual order. Take a step only if the answer still needs it; stop gathering once you can answer.",
+   "steps": [
+    {
+     "step": 1,
+     "tool": "find_entities",
+     "purpose": "the entities -> UniProt ids",
+     "takes": [
+      "the question / names in it"
+     ],
+     "call": "find_entities(...)"
+    },
+    {
+     "step": 2,
+     "tool": "gene_reactions",
+     "purpose": "who controls the reactions X takes part in, resolved to genes (by_regulator)",
+     "takes": [
+      "uniprot from step 1"
+     ],
+     "call": "execute_tool(name=\"gene_reactions\", arguments={...})",
+     "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+       "uniprot_ids": {
+        "items": {
+         "type": "string"
+        },
+        "title": "Uniprot Ids",
+        "type": "array"
+       },
+       "role": {
+        "anyOf": [
+         {
+          "enum": [
+           "REACTANT",
+           "PRODUCT",
+           "CATALYST",
+           "INHIBITOR",
+           "STIMULATOR"
+          ],
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "default": null,
+        "description": "Only reactions where the given gene plays this role.",
+        "title": "Role"
+       },
+       "regulated_only": {
+        "default": false,
+        "title": "Regulated Only",
+        "type": "boolean"
+       },
+       "skip": {
+        "default": 0,
+        "title": "Skip",
+        "type": "integer"
+       },
+       "limit": {
+        "default": 25,
+        "title": "Limit",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "uniprot_ids"
+      ],
+      "type": "object"
+     }
+    },
+    {
+     "step": 3,
+     "tool": "gene_interactions",
+     "purpose": "signed gene-level edges, for direct effects and chains",
+     "takes": [
+      "uniprot from step 2"
+     ],
+     "call": "execute_tool(name=\"gene_interactions\", arguments={...})",
+     "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+       "uniprot_ids": {
+        "items": {
+         "type": "string"
+        },
+        "title": "Uniprot Ids",
+        "type": "array"
+       },
+       "direction": {
+        "default": "both",
+        "enum": [
+         "in",
+         "out",
+         "both"
+        ],
+        "title": "Direction",
+        "type": "string"
+       },
+       "pathway_id": {
+        "anyOf": [
+         {
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "default": null,
+        "title": "Pathway Id"
+       },
+       "mechanism": {
+        "anyOf": [
+         {
+          "enum": [
+           "catalysis",
+           "regulation"
+          ],
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "default": null,
+        "title": "Mechanism"
+       },
+       "sign": {
+        "anyOf": [
+         {
+          "enum": [
+           "positive",
+           "negative"
+          ],
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "default": null,
+        "title": "Sign"
+       },
+       "within_set": {
+        "default": false,
+        "title": "Within Set",
+        "type": "boolean"
+       },
+       "skip": {
+        "default": 0,
+        "title": "Skip",
+        "type": "integer"
+       },
+       "limit": {
+        "default": 50,
+        "title": "Limit",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "uniprot_ids"
+      ],
+      "type": "object"
+     }
+    },
+    {
+     "step": 4,
+     "tool": "interaction_paths",
+     "purpose": "chains between two genes when there is no direct edge",
+     "takes": [
+      "uniprot from step 3"
+     ],
+     "call": "execute_tool(name=\"interaction_paths\", arguments={...})",
+     "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+       "source": {
+        "description": "UniProt id the chain starts from.",
+        "title": "Source",
+        "type": "string"
+       },
+       "target": {
+        "description": "UniProt id the chain ends at.",
+        "title": "Target",
+        "type": "string"
+       },
+       "limit": {
+        "default": 10,
+        "title": "Limit",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "source",
+       "target"
+      ],
+      "type": "object"
+     }
+    },
+    {
+     "step": 5,
+     "tool": "reaction_details",
+     "purpose": "what each reaction does and who plays which role",
+     "takes": [
+      "reactome_reaction from step 4"
+     ],
+     "call": "execute_tool(name=\"reaction_details\", arguments={...})",
+     "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+       "reaction_ids": {
+        "items": {
+         "type": "string"
+        },
+        "title": "Reaction Ids",
+        "type": "array"
+       }
+      },
+      "required": [
+       "reaction_ids"
+      ],
+      "type": "object"
+     }
+    },
+    {
+     "step": 6,
+     "tool": "read_snippets",
+     "purpose": "evidence for each interaction you report",
+     "takes": [
+      "uniprot from step 5"
+     ],
+     "call": "read_snippets(...)"
+    }
+   ],
+   "to_structure_the_answer": [
+    {
+     "recipe": "by_function",
+     "purpose": "What the findings do -- grouped by the GO terms they share, at more than one level.",
+     "tools": [
+      "common_ontology",
+      "gene_go_annotations"
+     ]
+    },
+    {
+     "recipe": "by_system",
+     "purpose": "Which systems the findings belong to -- the Reactome pathways they share.",
+     "tools": [
+      "gene_pathways"
+     ]
+    },
+    {
+     "recipe": "by_interaction",
+     "purpose": "How the findings act on one another -- regulators, hubs, chains.",
+     "tools": [
+      "gene_interactions"
+     ]
+    },
+    {
+     "recipe": "by_shared_machinery",
+     "purpose": "Which findings act through the same complexes and reactions.",
+     "tools": [
+      "shared_machinery"
+     ]
+    },
+    {
+     "recipe": null,
+     "purpose": "draw the evidence for the answer",
+     "tools": [
+      "show_evidence"
+     ]
+    }
+   ],
+   "last_resort": "If no tool here can answer a specific part of the question, read_cypher (via execute_tool) can -- say which part, and why the tools could not.",
+   "provenance": "Each result item carries a `cite` id; cite the evidence each claim rests on.",
+   "next_question": "For a new question, classify it again and call plan again.",
+   "release": null
+  }
+ },
+ {
+  "tool": "find_entities",
+  "arguments": {
+   "text": "TP53",
+   "labels": [
+    "Gene"
+   ],
+   "limit": 3
+  },
+  "result": {
+   "n_results": 3,
+   "truncated": false,
+   "results": [
+    {
+     "label": "Gene",
+     "id": "P04637",
+     "name": "TP53",
+     "rank": 0,
+     "cite": "node:Gene:P04637"
+    },
+    {
+     "label": "Gene",
+     "id": "Q53FA7",
+     "name": "TP53I3",
+     "rank": 1,
+     "cite": "node:Gene:Q53FA7"
+    },
+    {
+     "label": "Gene",
+     "id": "Q96S44",
+     "name": "TP53RK",
+     "rank": 1,
+     "cite": "node:Gene:Q96S44"
+    }
+   ],
+   "release": null
+  }
+ },
+ {
+  "tool": "describe_node",
+  "arguments": {
+   "id": "P04637"
+  },
+  "result": {
+   "labels": [
+    "Gene"
+   ],
+   "id": "P04637",
+   "name": "TP53",
+   "properties": {
+    "id": "P04637",
+    "entrez_ids": [
+     "7157"
+    ],
+    "name": "TP53",
+    "gene_synonym": "P53",
+    "full_name": "TP53",
+    "ensembl_gene": "ENSG00000141510",
+    "uniprot_ids": [
+     "P04637"
+    ]
+   },
+   "moves": [
+    {
+     "count": 1328,
+     "direction": "in",
+     "rel": "IS_FORM_OF",
+     "neighbor": "Protein"
+    },
+    {
+     "count": 140,
+     "direction": "in",
+     "rel": "ACTS_ON",
+     "neighbor": "Gene"
+    },
+    {
+     "count": 81,
+     "direction": "out",
+     "rel": "ASSOCIATED_WITH",
+     "neighbor": "Complex"
+    },
+    {
+     "count": 74,
+     "direction": "out",
+     "rel": "involved_in",
+     "neighbor": "Ontology"
+    },
+    {
+     "count": 72,
+     "direction": "out",
+     "rel": "ACTS_ON",
+     "neighbor": "Gene"
+    },
+    {
+     "count": 37,
+     "direction": "out",
+     "rel": "enables",
+     "neighbor": "Ontology"
+    },
+    {
+     "count": 14,
+     "direction": "out",
+     "rel": "located_in",
+     "neighbor": "Ontology"
+    },
+    {
+     "count": 7,
+     "direction": "out",
+     "rel": "acts_upstream_of_or_within",
+     "neighbor": "Ontology"
+    },
+    {
+     "count": 3,
+     "direction": "out",
+     "rel": "part_of",
+     "neighbor": "Ontology"
+    },
+    {
+     "count": 2,
+     "direction": "out",
+     "rel": "acts_upstream_of",
+     "neighbor": "Ontology"
+    },
+    {
+     "count": 2,
+     "direction": "out",
+     "rel": "is_active_in",
+     "neighbor": "Ontology"
+    },
+    {
+     "count": 1,
+     "direction": "out",
+     "rel": "ACTS_ON",
+     "neighbor": "CandidateSet"
+    },
+    {
+     "count": 1,
+     "direction": "out",
+     "rel": "ACTS_ON",
+     "neighbor": "DefinedSet"
+    },
+    {
+     "count": 1,
+     "direction": "out",
+     "rel": "acts_upstream_of_negative_effect",
+     "neighbor": "Ontology"
+    },
+    {
+     "count": 1,
+     "direction": "out",
+     "rel": "colocalizes_with",
+     "neighbor": "Ontology"
+    }
+   ],
+   "cite": "node:P04637",
+   "release": null
+  }
+ },
+ {
+  "tool": "expand",
+  "arguments": {
+   "id": "P04637",
+   "rel": "ACTS_ON",
+   "direction": "in",
+   "limit": 5
+  },
+  "result": {
+   "from": "P04637",
+   "rel": "ACTS_ON",
+   "total": 140,
+   "skip": 0,
+   "neighbors": [
+    {
+     "id": "Q16186",
+     "direction": "in",
+     "name": "ADRM1",
+     "labels": [
+      "Gene"
+     ],
+     "rel_props": {
+      "weight": 1,
+      "reaction_id": "R-HSA-8852354",
+      "mechanism": "catalysis",
+      "pathway_ids": [
+       "R-HSA-8852276"
+      ]
+     },
+     "cite": "edge:P04637-ACTS_ON-Q16186"
+    },
+    {
+     "id": "Q13315",
+     "direction": "in",
+     "name": "ATM",
+     "labels": [
+      "Gene"
+     ],
+     "rel_props": {
+      "weight": 2,
+      "reaction_id": "R-HSA-5693609",
+      "mechanism": "catalysis",
+      "pathway_ids": [
+       "R-HSA-5693565",
+       "R-HSA-6804756"
+      ]
+     },
+     "cite": "edge:P04637-ACTS_ON-Q13315"
+    },
+    {
+     "id": "Q13535",
+     "direction": "in",
+     "name": "ATR",
+     "labels": [
+      "Gene"
+     ],
+     "rel_props": {
+      "weight": 1,
+      "reaction_id": "R-HSA-6799332",
+      "mechanism": "catalysis",
+      "pathway_ids": [
+       "R-HSA-6804756"
+      ]
+     },
+     "cite": "edge:P04637-ACTS_ON-Q13535"
+    },
+    {
+     "id": "Q8WXE1",
+     "direction": "in",
+     "name": "ATRIP",
+     "labels": [
+      "Gene"
+     ],
+     "rel_props": {
+      "weight": 1,
+      "reaction_id": "R-HSA-6799332",
+      "mechanism": "catalysis",
+      "pathway_ids": [
+       "R-HSA-6804756"
+      ]
+     },
+     "cite": "edge:P04637-ACTS_ON-Q8WXE1"
+    },
+    {
+     "id": "O14965",
+     "direction": "in",
+     "name": "AURKA",
+     "labels": [
+      "Gene"
+     ],
+     "rel_props": {
+      "weight": 1,
+      "reaction_id": "R-HSA-6805103",
+      "mechanism": "catalysis",
+      "pathway_ids": [
+       "R-HSA-6804756"
+      ]
+     },
+     "cite": "edge:P04637-ACTS_ON-O14965"
+    }
+   ],
+   "release": null
+  }
+ },
+ {
+  "tool": "search_proteins",
+  "arguments": {
+   "query": "DNA polymerase epsilon accessory subunit",
+   "k": 3
+  },
+  "result": {
+   "query": "DNA polymerase epsilon accessory subunit",
+   "mode": "record_hybrid",
+   "n_results": 3,
+   "results": [
+    {
+     "uniprot_id": "P56282",
+     "entrez_id": "5427",
+     "record_score": 0.7,
+     "n_chunks": 1,
+     "snippets": [
+      {
+       "chunk_idx": 0,
+       "text": "Accessory component of the DNA polymerase epsilon complex (PubMed:10801849). Participates in DNA repair and in chromosomal DNA replication (By similarity). .",
+       "score": 0.8333334,
+       "chars": 157,
+       "cite": "qdrant:P56282#0"
+      }
+     ]
+    },
+    {
+     "uniprot_id": "Q14181",
+     "entrez_id": "23649",
+     "record_score": 0.5285714,
+     "n_chunks": 3,
+     "snippets": [
+      {
+       "chunk_idx": 0,
+       "text": "Accessory subunit of the DNA polymerase alpha complex (also known as the alpha DNA polymerase-primase complex) which plays an essential role in the initiation of DNA synthesis (PubMed:9705292). During the S phase of the cell cycle, the DNA polymerase alpha complex (composed of a catalytic subunit POLA1, an accessory subunit POLA2 and two primase subunits, the catalytic subunit PRIM1 and the regulatory subunit PRIM2) is recruited to DNA at the replicative forks via direct interactions with MCM10 and WDHD1 (By similarity).",
+       "score": 0.4166667,
+       "chars": 526,
+       "cite": "qdrant:Q14181#0"
+      }
+     ]
+    },
+    {
+     "uniprot_id": "Q9NR33",
+     "entrez_id": "56655",
+     "record_score": 0.5,
+     "n_chunks": 1,
+     "snippets": [
+      {
+       "chunk_idx": 0,
+       "text": "Accessory component of the DNA polymerase epsilon complex (PubMed:10801849). Participates in DNA repair and in chromosomal DNA replication (By similarity). .",
+       "score": 0.8333334,
+       "chars": 157,
+       "cite": "qdrant:Q9NR33#0"
+      }
+     ]
+    }
+   ],
+   "release": null
+  }
+ },
+ {
+  "tool": "read_snippets",
+  "arguments": {
+   "uniprot_id": "Q9NRF9",
+   "query": "role in DNA polymerase epsilon",
+   "n": 2
+  },
+  "result": {
+   "uniprot_id": "Q9NRF9",
+   "query": "role in DNA polymerase epsilon",
+   "n_results": 2,
+   "snippets": [
+    {
+     "chunk_idx": 0,
+     "text": "Accessory component of the DNA polymerase epsilon complex (PubMed:10801849). Participates in DNA repair and in chromosomal DNA replication (By similarity).",
+     "score": 1.0,
+     "chars": 155,
+     "cite": "qdrant:Q9NRF9#0"
+    },
+    {
+     "chunk_idx": 1,
+     "text": "Participates in DNA repair and in chromosomal DNA replication (By similarity). Forms a complex with CHRAC1 and binds naked DNA, which is then incorporated into chromatin, aided by the nucleosome-remodeling activity of ISWI/SNF2H and ACF1 (PubMed:10801849).",
+     "score": 0.6666667,
+     "chars": 256,
+     "cite": "qdrant:Q9NRF9#1"
+    }
+   ],
+   "release": null
+  }
+ },
+ {
+  "tool": "expand_snippet",
+  "arguments": {
+   "uniprot_id": "Q9NRF9",
+   "chunk_idx": 0,
+   "radius": 1
+  },
+  "result": {
+   "uniprot_id": "Q9NRF9",
+   "chunk_idx": 0,
+   "sentences": [
+    0,
+    3
+   ],
+   "of": 4,
+   "at_start": true,
+   "at_end": false,
+   "text": "Accessory component of the DNA polymerase epsilon complex (PubMed:10801849). Participates in DNA repair and in chromosomal DNA replication (By similarity). Forms a complex with CHRAC1 and binds naked DNA, which is then incorporated into chromatin, aided by the nucleosome-remodeling activity of ISWI/SNF2H and ACF1 (PubMed:10801849).",
+   "chars": 333,
+   "cite": "qdrant:Q9NRF9#0",
+   "release": null
+  }
+ },
+ {
+  "tool": "read_record",
+  "arguments": {
+   "uniprot_id": "Q9NRF9"
+  },
+  "result": {
+   "uniprot_id": "Q9NRF9",
+   "text": "Accessory component of the DNA polymerase epsilon complex (PubMed:10801849). Participates in DNA repair and in chromosomal DNA replication (By similarity). Forms a complex with CHRAC1 and binds naked DNA, which is then incorporated into chromatin, aided by the nucleosome-remodeling activity of ISWI/SNF2H and ACF1 (PubMed:10801849). Does not enhance nucleosome sliding activity of the ACF-5 ISWI chromatin remodeling complex (PubMed:14759371). .",
+   "chars": 446,
+   "n_chunks": 3,
+   "entrez_id": "54107",
+   "cite": "qdrant:Q9NRF9",
+   "release": null
+  }
+ },
+ {
+  "tool": "snippet_sources",
+  "arguments": {
+   "uniprot_id": "Q9NRF9",
+   "chunk_idx": 0
+  },
+  "result": {
+   "uniprot_id": "Q9NRF9",
+   "chunk_idx": 0,
+   "sentences": [
+    0,
+    2
+   ],
+   "passage_cite": "qdrant:Q9NRF9#0",
+   "n_pmids": 1,
+   "sources": [
+    {
+     "pmid": "10801849",
+     "sentence_idx": 0,
+     "sentence": "Accessory component of the DNA polymerase epsilon complex (PubMed:10801849).",
+     "cite": "pubmed:10801849"
+    }
+   ],
+   "release": null
+  }
+ },
+ {
+  "tool": "cited_pmids",
+  "arguments": {
+   "uniprot_ids": [
+    "Q9NRF9"
+   ]
+  },
+  "result": {
+   "results": [
+    {
+     "uniprot_id": "Q9NRF9",
+     "found": true,
+     "n_pmids": 2,
+     "citations": [
+      {
+       "pmid": "10801849",
+       "sentence_idx": 0,
+       "sentence": "Accessory component of the DNA polymerase epsilon complex (PubMed:10801849).",
+       "cite": "pubmed:10801849"
+      },
+      {
+       "pmid": "10801849",
+       "sentence_idx": 2,
+       "sentence": "Forms a complex with CHRAC1 and binds naked DNA, which is then incorporated into chromatin, aided by the nucleosome-remodeling activity of ISWI/SNF2H and ACF1 (PubMed:10801849).",
+       "cite": "pubmed:10801849"
+      },
+      {
+       "pmid": "14759371",
+       "sentence_idx": 3,
+       "sentence": "Does not enhance nucleosome sliding activity of the ACF-5 ISWI chromatin remodeling complex (PubMed:14759371). .",
+       "cite": "pubmed:14759371"
+      }
+     ]
+    }
+   ],
+   "release": null
+  }
+ },
+ {
+  "tool": "read_abstracts",
+  "arguments": {
+   "pmids": [
+    "10801849"
+   ]
+  },
+  "result": {
+   "results": [
+    {
+     "pmid": "10801849",
+     "found": true,
+     "text": "Title: Identification and cloning of two histone fold motif-containing subunits of HeLa DNA polymerase epsilon.\nAbstract: HeLa DNA polymerase epsilon (pol epsilon), possibly involved in both DNA replication and DNA repair, was previously isolated as a complex of a 261-kDa catalytic subunit and a tightly bound 59-kDa accessory protein. Saccharomyces cerevisiae pol epsilon, however, consists of four subunits: a 256-kDa catalytic subunit with 39% identity to HeLa pol epsilon p261, a 80-kDa subunit (DPB2) with 26% identity to HeLa pol epsilon p59, a 23-kDa subunit (DPB3), and a 22-kDa subunit (DPB4). We report here the identification and the cloning of two additional subunits of HeLa pol epsilon, p17, and p12. Both proteins contain histone fold motifs which are present also in S. cerevisiae DPB4 and DPB3. The histone fold motifs of p17 and DPB4 are related to that of subunit A of the CCAAT binding factor, whereas the histone fold motifs found in p12 and DPB3 are homologous to that in subunit C of CCAAT binding factor. p17 together with p12, but not p17 or p12 alone, interact with both p261 and p59 subunits of HeLa pol epsilon. The genes for p17 and p12 can be assigned to chromosome locations 9q33 and 2p12, respectively.",
+     "cite": "pubmed:10801849"
+    }
+   ],
+   "release": null
+  }
+ },
+ {
+  "tool": "search_abstracts",
+  "arguments": {
+   "entity_phrase": "POLE3 polymerase epsilon",
+   "limit": 2
+  },
+  "result": {
+   "entity_phrase": "POLE3 polymerase epsilon",
+   "query_phrase": null,
+   "n_results": 2,
+   "results": [
+    {
+     "pmid": "30217558",
+     "score": 0.009900989942252636,
+     "text": "Title: POLE3-POLE4 Is a Histone H3-H4 Chaperone that Maintains Chromatin Integrity during DNA Replication.\nAbstract: Maintenance of epigenetic integrity relies on coordinated recycling and partitioning of parental histones and deposition of newly synthesized histones during DNA replication. This process depends upon a poorly characterized network of histone chaperones, remodelers, and binding proteins. Here we implicate the POLE3-POLE4 subcomplex of the leading-strand polymerase, Pole, in replication-coupled nucleosome assembly through its ability to selectively bind to histones H3-H4. Using hydrogen/deuterium exchange mass spectrometry and physical mapping, we define minimal domains necessary for interaction\u00a0between POLE3-POLE4 and histones H3-H4. Biochemical analyses establish that POLE3-POLE4 is a histone chaperone that promotes tetrasome formation and DNA supercoiling in\u00a0vitro. In cells, POLE3-POLE4 binds both newly synthesized and parental histones, and its depletion hinders helicase unwinding and chromatin PCNA unloading and compromises coordinated parental histone retention and new histone deposition. Collectively, our study reveals that POLE3-POLE4 possesses intrinsic H3-H4 chaperone activity, which facilitates faithful nucleosome dynamics at the replication fork.",
+     "cite": "pubmed:30217558"
+    },
+    {
+     "pmid": "29754823",
+     "score": 0.009803921915590763,
+     "text": "Title: Pole Instability Drives Replication Stress, Abnormal Development, and Tumorigenesis.\nAbstract: DNA polymerase e (POLE) is a four-subunit complex and the major leading strand polymerase in eukaryotes. Budding yeast orthologs of POLE3 and POLE4 promote Pole processivity in\u00a0vitro but are dispensable for viability in\u00a0vivo. Here, we report that POLE4 deficiency in mice destabilizes the entire Pole complex, leading to embryonic lethality in inbred strains and extensive developmental abnormalities, leukopenia, and tumor predisposition in outbred strains. Comparable phenotypes of growth retardation and immunodeficiency are also observed in human patients harboring destabilizing mutations in POLE1. In both Pole4<sup>-/-</sup> mouse and POLE1 mutant human cells, Pole hypomorphy is associated with replication stress and p53 activation, which we attribute to inefficient replication origin firing. Strikingly, removing p53 is sufficient to rescue embryonic lethality and all developmental abnormalities in Pole4 null mice. However, Pole4<sup>-/-</sup>p53<sup>+/-</sup> mice exhibit accelerated tumorigenesis, revealing an important role for controlled CMG and origin activation in normal development and tumor prevention.",
+     "cite": "pubmed:29754823"
+    }
+   ],
+   "release": null
+  }
+ },
+ {
+  "tool": "pathway_genes",
+  "arguments": {
+   "pathway_id": "R-HSA-111459"
+  },
+  "result": {
+   "pathway_id": "R-HSA-111459",
+   "pathway": "Activation of caspases through apoptosome-mediated cleavage",
+   "n_genes": 6,
+   "genes": [
+    {
+     "uniprot_id": "P55210",
+     "symbol": "CASP7",
+     "cite": "member:R-HSA-111459>P55210"
+    },
+    {
+     "uniprot_id": "P42574",
+     "symbol": "CASP3",
+     "cite": "member:R-HSA-111459>P42574"
+    },
+    {
+     "uniprot_id": "P55211",
+     "symbol": "CASP9",
+     "cite": "member:R-HSA-111459>P55211"
+    },
+    {
+     "uniprot_id": "P99999",
+     "symbol": "CYCS",
+     "cite": "member:R-HSA-111459>P99999"
+    },
+    {
+     "uniprot_id": "O14727",
+     "symbol": "APAF1",
+     "cite": "member:R-HSA-111459>O14727"
+    },
+    {
+     "uniprot_id": "P98170",
+     "symbol": "XIAP",
+     "cite": "member:R-HSA-111459>P98170"
+    }
+   ],
+   "release": null
+  }
+ },
+ {
+  "tool": "gene_pathways",
+  "arguments": {
+   "uniprot_ids": [
+    "P04637"
+   ],
+   "limit": 3
+  },
+  "result": {
+   "n_results": 3,
+   "truncated": false,
+   "results": [
+    {
+     "pathway_id": "R-HSA-111448",
+     "pathway": "Activation of NOXA and translocation to mitochondria",
+     "genes": [
+      "P04637"
+     ],
+     "n": 1,
+     "cite": "node:Pathway:R-HSA-111448"
+    },
+    {
+     "pathway_id": "R-HSA-139915",
+     "pathway": "Activation of PUMA and translocation to mitochondria",
+     "genes": [
+      "P04637"
+     ],
+     "n": 1,
+     "cite": "node:Pathway:R-HSA-139915"
+    },
+    {
+     "pathway_id": "R-HSA-390471",
+     "pathway": "Association of TriC/CCT with target proteins during biosynthesis",
+     "genes": [
+      "P04637"
+     ],
+     "n": 1,
+     "cite": "node:Pathway:R-HSA-390471"
+    }
+   ],
+   "release": null
+  }
+ },
+ {
+  "tool": "gene_interactions",
+  "arguments": {
+   "uniprot_ids": [
+    "P04637"
+   ],
+   "direction": "in",
+   "sign": "negative"
+  },
+  "result": {
+   "in_scope": 140,
+   "breakdown": [
+    {
+     "mechanism": "catalysis",
+     "negative": 0,
+     "unsigned": 137,
+     "positive": 0
+    },
+    {
+     "mechanism": "regulation",
+     "negative": 2,
+     "unsigned": 0,
+     "positive": 1
+    }
+   ],
+   "total": 2,
+   "skip": 0,
+   "interactions": [
+    {
+     "target_symbol": "TP53",
+     "reaction": "MDM2 binds TP53",
+     "sign": "negative",
+     "source_symbol": "PHF20",
+     "source": "Q9BVI0",
+     "reaction_id": "R-HSA-5633460",
+     "target": "P04637",
+     "mechanism": "regulation",
+     "pathway_ids": [
+      "R-HSA-6804757"
+     ],
+     "cite": "edge:Q9BVI0-ACTS_ON->P04637@R-HSA-5633460"
+    },
+    {
+     "target_symbol": "TP53",
+     "reaction": "PRDM1 represses TP53 expression",
+     "sign": "negative",
+     "source_symbol": "PRDM1",
+     "source": "O75626",
+     "reaction_id": "R-HSA-6804188",
+     "target": "P04637",
+     "mechanism": "regulation",
+     "pathway_ids": [
+      "R-HSA-6804754"
+     ],
+     "cite": "edge:O75626-ACTS_ON->P04637@R-HSA-6804188"
+    }
+   ],
+   "coverage": "2 of 140 gene-level edges in scope match the filters; `breakdown` counts all 140 by mechanism and sign. Complete for the gene-level edge layer. That layer keeps one edge per gene pair and has no edge where a gene sits inside a set -- gene_reactions covers both, at the reaction level.",
+   "release": null
+  }
+ },
+ {
+  "tool": "pathway_interactions",
+  "arguments": {
+   "pathway_id": "R-HSA-111459",
+   "limit": 10
+  },
+  "result": {
+   "pathway_id": "R-HSA-111459",
+   "total": 6,
+   "skip": 0,
+   "interactions": [
+    {
+     "target_symbol": "CASP3",
+     "sign": null,
+     "source_symbol": "APAF1",
+     "source": "O14727",
+     "reaction_id": "R-HSA-114252",
+     "target": "P42574",
+     "mechanism": "catalysis",
+     "cite": "edge:O14727-ACTS_ON->P42574@R-HSA-114252"
+    },
+    {
+     "target_symbol": "CASP7",
+     "sign": null,
+     "source_symbol": "APAF1",
+     "source": "O14727",
+     "reaction_id": "R-HSA-114261",
+     "target": "P55210",
+     "mechanism": "catalysis",
+     "cite": "edge:O14727-ACTS_ON->P55210@R-HSA-114261"
+    },
+    {
+     "target_symbol": "CASP3",
+     "sign": null,
+     "source_symbol": "CASP9",
+     "source": "P55211",
+     "reaction_id": "R-HSA-418845",
+     "target": "P42574",
+     "mechanism": "catalysis",
+     "cite": "edge:P55211-ACTS_ON->P42574@R-HSA-418845"
+    },
+    {
+     "target_symbol": "CASP7",
+     "sign": null,
+     "source_symbol": "CASP9",
+     "source": "P55211",
+     "reaction_id": "R-HSA-114261",
+     "target": "P55210",
+     "mechanism": "catalysis",
+     "cite": "edge:P55211-ACTS_ON->P55210@R-HSA-114261"
+    },
+    {
+     "target_symbol": "CASP3",
+     "sign": null,
+     "source_symbol": "CYCS",
+     "source": "P99999",
+     "reaction_id": "R-HSA-114252",
+     "target": "P42574",
+     "mechanism": "catalysis",
+     "cite": "edge:P99999-ACTS_ON->P42574@R-HSA-114252"
+    },
+    {
+     "target_symbol": "CASP7",
+     "sign": null,
+     "source_symbol": "CYCS",
+     "source": "P99999",
+     "reaction_id": "R-HSA-114261",
+     "target": "P55210",
+     "mechanism": "catalysis",
+     "cite": "edge:P99999-ACTS_ON->P55210@R-HSA-114261"
+    }
+   ],
+   "release": null
+  }
+ },
+ {
+  "tool": "interaction_paths",
+  "arguments": {
+   "source": "Q13315",
+   "target": "P24941"
+  },
+  "result": {
+   "n_results": 1,
+   "truncated": false,
+   "results": [
+    {
+     "hops": 3,
+     "genes": [
+      "ATM",
+      "TP53",
+      "CDKN1A",
+      "CDK2"
+     ],
+     "ids": [
+      "Q13315",
+      "P04637",
+      "P38936",
+      "P24941"
+     ],
+     "steps": [
+      {
+       "sign": null,
+       "cite": "edge:Q13315-ACTS_ON->P04637@R-HSA-5693609",
+       "source": "ATM",
+       "reaction_id": "R-HSA-5693609",
+       "target": "TP53",
+       "mechanism": "catalysis"
+      },
+      {
+       "sign": "positive",
+       "cite": "edge:P04637-ACTS_ON->P38936@R-HSA-6803388",
+       "source": "TP53",
+       "reaction_id": "R-HSA-6803388",
+       "target": "CDKN1A",
+       "mechanism": "regulation"
+      },
+      {
+       "sign": "negative",
+       "cite": "edge:P38936-ACTS_ON->P24941@R-HSA-3788705",
+       "source": "CDKN1A",
+       "reaction_id": "R-HSA-3788705",
+       "target": "CDK2",
+       "mechanism": "regulation"
+      }
+     ],
+     "cite": "path:Q13315,P04637,P38936,P24941"
+    }
+   ],
+   "release": null
+  }
+ },
+ {
+  "tool": "gene_reactions",
+  "arguments": {
+   "uniprot_ids": [
+    "P04637"
+   ],
+   "role": "REACTANT",
+   "regulated_only": true,
+   "limit": 5
+  },
+  "result": {
+   "total": 6,
+   "n_regulators": 12,
+   "by_regulator": [
+    {
+     "uniprot_id": "Q09472",
+     "reactions": [
+      {
+       "reaction": "ING2-bound EP300 acetylates TP53",
+       "via": "ING2:EP300:p-S15,S20-TP53 Tetramer",
+       "reaction_id": "R-HSA-6811508",
+       "via_type": "Complex"
+      }
+     ],
+     "n_reactions": 1,
+     "role": "CATALYST",
+     "regulator": "EP300"
+    },
+    {
+     "uniprot_id": "Q9H160",
+     "reactions": [
+      {
+       "reaction": "ING2-bound EP300 acetylates TP53",
+       "via": "ING2:EP300:p-S15,S20-TP53 Tetramer",
+       "reaction_id": "R-HSA-6811508",
+       "via_type": "Complex"
+      }
+     ],
+     "n_reactions": 1,
+     "role": "CATALYST",
+     "regulator": "ING2"
+    },
+    {
+     "uniprot_id": "Q00987",
+     "reactions": [
+      {
+       "reaction": "MDM2 ubiquitinates TP53",
+       "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53",
+       "reaction_id": "R-HSA-6804879",
+       "via_type": "Complex"
+      }
+     ],
+     "n_reactions": 1,
+     "role": "CATALYST",
+     "regulator": "MDM2"
+    },
+    {
+     "uniprot_id": "O15151",
+     "reactions": [
+      {
+       "reaction": "MDM2 ubiquitinates TP53",
+       "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53",
+       "reaction_id": "R-HSA-6804879",
+       "via_type": "Complex"
+      }
+     ],
+     "n_reactions": 1,
+     "role": "CATALYST",
+     "regulator": "MDM4"
+    },
+    {
+     "uniprot_id": "Q8N726",
+     "reactions": [
+      {
+       "reaction": "MDM2 ubiquitinates TP53",
+       "via": "p14ARF:p-S166,S188-MDM2 dimer,p-S166,S188-MDM2:MDM4",
+       "reaction_id": "R-HSA-6804879",
+       "via_type": "Complex"
+      }
+     ],
+     "n_reactions": 1,
+     "role": "INHIBITOR",
+     "regulator": "CDKN2A"
+    },
+    {
+     "uniprot_id": "Q00987",
+     "reactions": [
+      {
+       "reaction": "MDM2 ubiquitinates TP53",
+       "via": "p14ARF:p-S166,S188-MDM2 dimer,p-S166,S188-MDM2:MDM4",
+       "reaction_id": "R-HSA-6804879",
+       "via_type": "Complex"
+      }
+     ],
+     "n_reactions": 1,
+     "role": "INHIBITOR",
+     "regulator": "MDM2"
+    },
+    {
+     "uniprot_id": "O15151",
+     "reactions": [
+      {
+       "reaction": "MDM2 ubiquitinates TP53",
+       "via": "p14ARF:p-S166,S188-MDM2 dimer,p-S166,S188-MDM2:MDM4",
+       "reaction_id": "R-HSA-6804879",
+       "via_type": "Complex"
+      }
+     ],
+     "n_reactions": 1,
+     "role": "INHIBITOR",
+     "regulator": "MDM4"
+    },
+    {
+     "uniprot_id": "Q9BVI0",
+     "reactions": [
+      {
+       "reaction": "MDM2 binds TP53",
+       "via": "PHF20",
+       "reaction_id": "R-HSA-5633460",
+       "via_type": "Protein"
+      }
+     ],
+     "n_reactions": 1,
+     "role": "INHIBITOR",
+     "regulator": "PHF20"
+    },
+    {
+     "uniprot_id": "O75626",
+     "reactions": [
+      {
+       "reaction": "PRDM1 represses TP53 expression",
+       "via": "PRDM1:TP53 Gene",
+       "reaction_id": "R-HSA-6804188",
+       "via_type": "Complex"
+      }
+     ],
+     "n_reactions": 1,
+     "role": "INHIBITOR",
+     "regulator": "PRDM1"
+    },
+    {
+     "uniprot_id": "P40763",
+     "reactions": [
+      {
+       "reaction": "Expression of NDN,TP53",
+       "via": "p-Y705-STAT3 dimer",
+       "reaction_id": "R-HSA-6789960",
+       "via_type": "Complex"
+      }
+     ],
+     "n_reactions": 1,
+     "role": "INHIBITOR",
+     "regulator": "STAT3"
+    },
+    {
+     "uniprot_id": null,
+     "reactions": [
+      {
+       "reaction": "ING2-bound EP300 acetylates TP53",
+       "via": "PI5P",
+       "reaction_id": "R-HSA-6811508",
+       "via_type": "SmallMolecule"
+      }
+     ],
+     "n_reactions": 1,
+     "role": "STIMULATOR",
+     "regulator": "PI5P"
+    },
+    {
+     "uniprot_id": "O95231",
+     "reactions": [
+      {
+       "reaction": "VENTX stimulates TP53 gene expression",
+       "via": "VENTX:TP53 Gene",
+       "reaction_id": "R-HSA-8853911",
+       "via_type": "Complex"
+      }
+     ],
+     "n_reactions": 1,
+     "role": "STIMULATOR",
+     "regulator": "VENTX"
+    }
+   ],
+   "skip": 0,
+   "reactions": [
+    {
+     "reaction": "Expression of NDN,TP53",
+     "controls": [
+      {
+       "entity": "p-Y705-STAT3 dimer",
+       "role": "INHIBITOR"
+      }
+     ],
+     "uniprot_id": "P04637",
+     "via": [
+      "NDN, TP53",
+      "NDN gene, TP53 gene"
+     ],
+     "symbol": "TP53",
+     "reaction_id": "R-HSA-6789960",
+     "gene_roles": [
+      "PRODUCT",
+      "REACTANT"
+     ],
+     "cite": "reaction:R-HSA-6789960"
+    },
+    {
+     "reaction": "ING2-bound EP300 acetylates TP53",
+     "controls": [
+      {
+       "entity": "PI5P",
+       "role": "STIMULATOR"
+      },
+      {
+       "entity": "ING2:EP300:p-S15,S20-TP53 Tetramer",
+       "role": "CATALYST"
+      }
+     ],
+     "uniprot_id": "P04637",
+     "via": [
+      "ING2:EP300:p-S15,S20-TP53 Tetramer",
+      "ING2:EP300:Ac-K382,p-S15,S20-TP53 Tetramer"
+     ],
+     "symbol": "TP53",
+     "reaction_id": "R-HSA-6811508",
+     "gene_roles": [
+      "REACTANT",
+      "CATALYST",
+      "PRODUCT"
+     ],
+     "cite": "reaction:R-HSA-6811508"
+    },
+    {
+     "reaction": "MDM2 binds TP53",
+     "controls": [
+      {
+       "entity": "PHF20",
+       "role": "INHIBITOR"
+      }
+     ],
+     "uniprot_id": "P04637",
+     "via": [
+      "TP53 Tetramer",
+      "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53"
+     ],
+     "symbol": "TP53",
+     "reaction_id": "R-HSA-5633460",
+     "gene_roles": [
+      "REACTANT",
+      "PRODUCT"
+     ],
+     "cite": "reaction:R-HSA-5633460"
+    },
+    {
+     "reaction": "MDM2 ubiquitinates TP53",
+     "controls": [
+      {
+       "entity": "p14ARF:p-S166,S188-MDM2 dimer,p-S166,S188-MDM2:MDM4",
+       "role": "INHIBITOR"
+      },
+      {
+       "entity": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53",
+       "role": "CATALYST"
+      }
+     ],
+     "uniprot_id": "P04637",
+     "via": [
+      "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53",
+      "PolyUb-TP53 Tetramer"
+     ],
+     "symbol": "TP53",
+     "reaction_id": "R-HSA-6804879",
+     "gene_roles": [
+      "REACTANT",
+      "CATALYST",
+      "PRODUCT"
+     ],
+     "cite": "reaction:R-HSA-6804879"
+    },
+    {
+     "reaction": "PRDM1 represses TP53 expression",
+     "controls": [
+      {
+       "entity": "PRDM1:TP53 Gene",
+       "role": "INHIBITOR"
+      }
+     ],
+     "uniprot_id": "P04637",
+     "via": [
+      "TP53",
+      "TP53 gene",
+      "PRDM1:TP53 Gene"
+     ],
+     "symbol": "TP53",
+     "reaction_id": "R-HSA-6804188",
+     "gene_roles": [
+      "PRODUCT",
+      "REACTANT",
+      "INHIBITOR"
+     ],
+     "cite": "reaction:R-HSA-6804188"
+    }
+   ],
+   "coverage": "All 6 reactions these genes take part in (through any protein form, complex or set) under the given filters, and every gene that controls them (12 in by_regulator). This is the complete reaction layer for these genes in this release; the gene-level edges summarise it.",
+   "release": null
+  }
+ },
+ {
+  "tool": "reaction_details",
+  "arguments": {
+   "reaction_ids": [
+    "R-HSA-5633460"
+   ]
+  },
+  "result": {
+   "n_results": 1,
+   "truncated": false,
+   "results": [
+    {
+     "reaction_id": "R-HSA-5633460",
+     "reaction": "MDM2 binds TP53",
+     "participants": [
+      {
+       "n_genes": 1,
+       "genes": [
+        "PHF20"
+       ],
+       "entity": "PHF20",
+       "role": "INHIBITOR",
+       "entity_id": "R-HSA-3222239",
+       "type": "Protein",
+       "_members": [
+        {
+         "uniprot_id": "Q9BVI0",
+         "symbol": "PHF20"
+        }
+       ]
+      },
+      {
+       "n_genes": 3,
+       "genes": [
+        "MDM2",
+        "MDM4",
+        "TP53"
+       ],
+       "entity": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53",
+       "role": "PRODUCT",
+       "entity_id": "R-HSA-6804885",
+       "type": "Complex",
+       "_members": [
+        {
+         "uniprot_id": "Q00987",
+         "symbol": "MDM2"
+        },
+        {
+         "uniprot_id": "O15151",
+         "symbol": "MDM4"
+        },
+        {
+         "uniprot_id": "P04637",
+         "symbol": "TP53"
+        }
+       ]
+      },
+      {
+       "n_genes": 1,
+       "genes": [
+        "TP53"
+       ],
+       "entity": "TP53 Tetramer",
+       "role": "REACTANT",
+       "entity_id": "R-HSA-3209194",
+       "type": "Complex",
+       "_members": [
+        {
+         "uniprot_id": "P04637",
+         "symbol": "TP53"
+        }
+       ]
+      },
+      {
+       "n_genes": 2,
+       "genes": [
+        "MDM2",
+        "MDM4"
+       ],
+       "entity": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2:MDM4",
+       "role": "REACTANT",
+       "entity_id": "R-HSA-6804745",
+       "type": "DefinedSet",
+       "_members": [
+        {
+         "uniprot_id": "Q00987",
+         "symbol": "MDM2"
+        },
+        {
+         "uniprot_id": "O15151",
+         "symbol": "MDM4"
+        }
+       ]
+      }
+     ],
+     "cite": "reaction:R-HSA-5633460"
+    }
+   ],
+   "release": null
+  }
+ },
+ {
+  "tool": "gene_go_annotations",
+  "arguments": {
+   "uniprot_ids": [
+    "Q9NRF9"
+   ],
+   "experimental_only": true,
+   "limit": 5
+  },
+  "result": {
+   "n_results": 5,
+   "truncated": false,
+   "results": [
+    {
+     "uniprot_id": "Q9NRF9",
+     "symbol": "POLE3",
+     "relation": "involved_in",
+     "go_id": "GO_0006261",
+     "term": "DNA-templated DNA replication",
+     "aspect": "biological_process",
+     "evidence": [
+      "IDA"
+     ],
+     "cite": "go:Q9NRF9-involved_in->GO_0006261[IDA]"
+    },
+    {
+     "uniprot_id": "Q9NRF9",
+     "symbol": "POLE3",
+     "relation": "involved_in",
+     "go_id": "GO_0006338",
+     "term": "chromatin remodeling",
+     "aspect": "biological_process",
+     "evidence": [
+      "IDA"
+     ],
+     "cite": "go:Q9NRF9-involved_in->GO_0006338[IDA]"
+    },
+    {
+     "uniprot_id": "Q9NRF9",
+     "symbol": "POLE3",
+     "relation": "involved_in",
+     "go_id": "GO_0000122",
+     "term": "negative regulation of transcription by RNA polymerase II",
+     "aspect": "biological_process",
+     "evidence": [
+      "IDA"
+     ],
+     "cite": "go:Q9NRF9-involved_in->GO_0000122[IDA]"
+    },
+    {
+     "uniprot_id": "Q9NRF9",
+     "symbol": "POLE3",
+     "relation": "involved_in",
+     "go_id": "GO_0006334",
+     "term": "nucleosome assembly",
+     "aspect": "biological_process",
+     "evidence": [
+      "IDA"
+     ],
+     "cite": "go:Q9NRF9-involved_in->GO_0006334[IDA]"
+    },
+    {
+     "uniprot_id": "Q9NRF9",
+     "symbol": "POLE3",
+     "relation": "involved_in",
+     "go_id": "GO_0006275",
+     "term": "regulation of DNA replication",
+     "aspect": "biological_process",
+     "evidence": [
+      "IMP"
+     ],
+     "cite": "go:Q9NRF9-involved_in->GO_0006275[IMP]"
+    }
+   ],
+   "release": null
+  }
+ },
+ {
+  "tool": "go_term_genes",
+  "arguments": {
+   "go_id": "GO:0018344",
+   "limit": 5
+  },
+  "result": {
+   "go_id": "GO_0018344",
+   "term": "protein geranylgeranylation",
+   "total": 5,
+   "skip": 0,
+   "genes": [
+    {
+     "uniprot_id": "P24386",
+     "symbol": "CHM",
+     "via_terms": [
+      "GO_0018344"
+     ],
+     "cite": "member:GO_0018344>P24386"
+    },
+    {
+     "uniprot_id": "P26374",
+     "symbol": "CHML",
+     "via_terms": [
+      "GO_0018344"
+     ],
+     "cite": "member:GO_0018344>P26374"
+    },
+    {
+     "uniprot_id": "P49354",
+     "symbol": "FNTA",
+     "via_terms": [
+      "GO_0018344"
+     ],
+     "cite": "member:GO_0018344>P49354"
+    },
+    {
+     "uniprot_id": "Q92696",
+     "symbol": "RABGGTA",
+     "via_terms": [
+      "GO_0018344"
+     ],
+     "cite": "member:GO_0018344>Q92696"
+    },
+    {
+     "uniprot_id": "P53611",
+     "symbol": "RABGGTB",
+     "via_terms": [
+      "GO_0018344"
+     ],
+     "cite": "member:GO_0018344>P53611"
+    }
+   ],
+   "release": null
+  }
+ },
+ {
+  "tool": "pathway_go_profile",
+  "arguments": {
+   "pathway_id": "R-HSA-6803205",
+   "limit": 3
+  },
+  "result": {
+   "n_results": 3,
+   "truncated": false,
+   "results": [
+    {
+     "pathway_id": "R-HSA-6803205",
+     "pathway": "TP53 regulates transcription of several additional cell death genes whose specific roles in p53-dependent apoptosis remain uncertain",
+     "go_id": "GO_0018344",
+     "term": "protein geranylgeranylation",
+     "genes_with_term": 3,
+     "pathway_genes": 14,
+     "genes_with_term_overall": 5,
+     "fold_enrichment": 427.5,
+     "genes": [
+      "RABGGTA",
+      "RABGGTB",
+      "CHM"
+     ],
+     "cite": "profile:R-HSA-6803205~GO_0018344"
+    },
+    {
+     "pathway_id": "R-HSA-6803205",
+     "pathway": "TP53 regulates transcription of several additional cell death genes whose specific roles in p53-dependent apoptosis remain uncertain",
+     "go_id": "GO_0042771",
+     "term": "intrinsic apoptotic signaling pathway in response to DNA damage by p53 class mediator",
+     "genes_with_term": 3,
+     "pathway_genes": 14,
+     "genes_with_term_overall": 17,
+     "fold_enrichment": 125.7,
+     "genes": [
+      "TP63",
+      "TP53",
+      "TP73"
+     ],
+     "cite": "profile:R-HSA-6803205~GO_0042771"
+    },
+    {
+     "pathway_id": "R-HSA-6803205",
+     "pathway": "TP53 regulates transcription of several additional cell death genes whose specific roles in p53-dependent apoptosis remain uncertain",
+     "go_id": "GO_1900119",
+     "term": "positive regulation of execution phase of apoptosis",
+     "genes_with_term": 2,
+     "pathway_genes": 14,
+     "genes_with_term_overall": 17,
+     "fold_enrichment": 83.8,
+     "genes": [
+      "TP53",
+      "TP53BP2"
+     ],
+     "cite": "profile:R-HSA-6803205~GO_1900119"
+    }
+   ],
+   "release": null
+  }
+ },
+ {
+  "tool": "common_ontology",
+  "arguments": {
+   "uniprot_ids": [
+    "Q00987",
+    "O15151",
+    "Q969K3",
+    "Q8WZ73",
+    "O14965",
+    "P21675",
+    "Q96GD4",
+    "Q9Y3T9",
+    "Q9NRG4",
+    "Q9NQR1",
+    "Q9Y468",
+    "Q9H9B1",
+    "Q96KQ7",
+    "Q8WUF5"
+   ],
+   "aspect": "molecular_function",
+   "levels": 2,
+   "exclude_terms": [
+    "p53"
+   ]
+  },
+  "result": {
+   "aspect": "molecular_function",
+   "levels": 2,
+   "excluded": [
+    "p53"
+   ],
+   "n_genes": 14,
+   "unknown_ids": [],
+   "groups": [
+    {
+     "go_id": "GO_0140993",
+     "term": "histone modifying activity",
+     "level": 1,
+     "genes": [
+      "AURKB",
+      "EHMT1",
+      "EHMT2",
+      "KMT5A",
+      "SMYD2",
+      "TAF1"
+     ],
+     "uniprot_ids": [
+      "P21675",
+      "Q96GD4",
+      "Q96KQ7",
+      "Q9H9B1",
+      "Q9NQR1",
+      "Q9NRG4"
+     ],
+     "parent": "GO_0140096",
+     "genes_with_term_overall": 166,
+     "information_content": 4.1,
+     "cite": "profile:set~GO_0140993"
+    },
+    {
+     "go_id": "GO_0061630",
+     "term": "ubiquitin protein ligase activity",
+     "level": 1,
+     "genes": [
+      "MDM2",
+      "RFFL",
+      "RNF34"
+     ],
+     "uniprot_ids": [
+      "Q00987",
+      "Q8WZ73",
+      "Q969K3"
+     ],
+     "parent": "GO_0140096",
+     "genes_with_term_overall": 225,
+     "information_content": 3.8,
+     "cite": "profile:set~GO_0061630"
+    },
+    {
+     "go_id": "GO_0031491",
+     "term": "nucleosome binding",
+     "level": 1,
+     "genes": [
+      "L3MBTL1",
+      "NOC2L"
+     ],
+     "uniprot_ids": [
+      "Q9Y3T9",
+      "Q9Y468"
+     ],
+     "genes_with_term_overall": 53,
+     "information_content": 5.24,
+     "cite": "profile:set~GO_0031491"
+    },
+    {
+     "go_id": "GO_0140096",
+     "term": "catalytic activity, acting on a protein",
+     "level": 2,
+     "genes": [
+      "AURKA",
+      "AURKB",
+      "EHMT1",
+      "EHMT2",
+      "KMT5A",
+      "MDM2",
+      "RFFL",
+      "RNF34",
+      "SMYD2",
+      "TAF1"
+     ],
+     "uniprot_ids": [
+      "O14965",
+      "P21675",
+      "Q00987",
+      "Q8WZ73",
+      "Q969K3",
+      "Q96GD4",
+      "Q96KQ7",
+      "Q9H9B1",
+      "Q9NQR1",
+      "Q9NRG4"
+     ],
+     "children": [
+      "GO_0140993",
+      "GO_0061630"
+     ],
+     "absorbed": [
+      "AURKA"
+     ],
+     "genes_with_term_overall": 1445,
+     "information_content": 1.94,
+     "cite": "profile:set~GO_0140096"
+    }
+   ],
+   "ungrouped": [
+    "MDM4",
+    "PPP1R13L"
+   ],
+   "release": null
+  }
+ },
+ {
+  "tool": "shared_machinery",
+  "arguments": {
+   "uniprot_ids": [
+    "Q00987",
+    "O15151",
+    "Q969K3",
+    "Q8WZ73",
+    "O14965",
+    "P21675",
+    "Q96GD4",
+    "Q9Y3T9",
+    "Q9NRG4",
+    "Q9NQR1",
+    "Q9Y468",
+    "Q9H9B1",
+    "Q96KQ7",
+    "Q8WUF5"
+   ],
+   "limit": 6
+  },
+  "result": {
+   "n_results": 5,
+   "truncated": false,
+   "results": [
+    {
+     "genes": [
+      "MDM2",
+      "MDM4"
+     ],
+     "uniprot_ids": [
+      "Q00987",
+      "O15151"
+     ],
+     "n_genes": 2,
+     "n_complexes": 17,
+     "n_reactions": 15,
+     "complex_examples": [
+      {
+       "id": "R-HSA-3222079",
+       "name": "DAXX:(PolyUb,p-S166,S188-MDM2):USP7"
+      },
+      {
+       "id": "R-HSA-6805029",
+       "name": "PolyUb,p-S166,S188-MDM2:(PolyUb,p-S166,S188-MDM2, PolyUb,p-S342,S367,S403-MDM4)"
+      },
+      {
+       "id": "R-HSA-6804937",
+       "name": "PolyUb,p-S166,S188-MDM2:PolyUb,p-S342,S367,S403-MDM4"
+      }
+     ],
+     "reaction_examples": [
+      {
+       "id": "R-HSA-3222072",
+       "name": "DAXX binds Ub-MDM2 and USP7"
+      },
+      {
+       "id": "R-HSA-5633460",
+       "name": "MDM2 binds TP53"
+      },
+      {
+       "id": "R-HSA-6804741",
+       "name": "MDM2 forms homo- or heterodimers"
+      }
+     ],
+     "cite": "profile:machinery~Q00987,O15151"
+    },
+    {
+     "genes": [
+      "EHMT1",
+      "EHMT2"
+     ],
+     "uniprot_ids": [
+      "Q9H9B1",
+      "Q96KQ7"
+     ],
+     "n_genes": 2,
+     "n_complexes": 8,
+     "n_reactions": 14,
+     "complex_examples": [
+      {
+       "id": "R-HSA-8953577",
+       "name": "E2F6:TFDP1/2,(E2F6:TFDP1:MGA:MAX:EHMT1:EHMT2:CBX3:PRC1.6)"
+      },
+      {
+       "id": "R-HSA-8953419",
+       "name": "E2F6:TFDP1:MGA:MAX:EHMT1:EHMT2"
+      },
+      {
+       "id": "R-HSA-8953987",
+       "name": "E2F6:TFDP1:MGA:MAX:EHMT1:EHMT2:CBX3:PRC1.6"
+      }
+     ],
+     "reaction_examples": [
+      {
+       "id": "R-HSA-9007283",
+       "name": "CBX3 and PRC1.6 associate with E2F6.com-1"
+      },
+      {
+       "id": "R-HSA-3788725",
+       "name": "Cdh1:APC/C complex binds EHMT1:EHMT2"
+      },
+      {
+       "id": "R-HSA-3788724",
+       "name": "Cdh1:APC/C ubiquitinates EHMT1 and EHMT2"
+      }
+     ],
+     "cite": "profile:machinery~Q9H9B1,Q96KQ7"
+    },
+    {
+     "genes": [
+      "AURKA",
+      "AURKB"
+     ],
+     "uniprot_ids": [
+      "O14965",
+      "Q96GD4"
+     ],
+     "n_genes": 2,
+     "n_complexes": 3,
+     "n_reactions": 3,
+     "complex_examples": [
+      {
+       "id": "R-HSA-174056",
+       "name": "(APC/C:Cdh1)-targeted cell cycle proteins"
+      },
+      {
+       "id": "R-HSA-174107",
+       "name": "cell cycle proteins:phospho-APC/C:Cdh1 complex"
+      },
+      {
+       "id": "R-HSA-174248",
+       "name": "multiubiquitinated cell cycle protein:APC/C:Cdh1 complex"
+      }
+     ],
+     "reaction_examples": [
+      {
+       "id": "R-HSA-174088",
+       "name": "Association of cell cycle proteins with the APC/C:Cdh1 complex"
+      },
+      {
+       "id": "R-HSA-174105",
+       "name": "Degradation of multiubiquitinated cell cycle proteins"
+      },
+      {
+       "id": "R-HSA-174195",
+       "name": "Ubiquitination of cell cycle proteins targeted by the APC/C:Cdh1complex"
+      }
+     ],
+     "cite": "profile:machinery~O14965,Q96GD4"
+    },
+    {
+     "genes": [
+      "AURKB",
+      "NOC2L"
+     ],
+     "uniprot_ids": [
+      "Q96GD4",
+      "Q9Y3T9"
+     ],
+     "n_genes": 2,
+     "n_complexes": 2,
+     "n_reactions": 2,
+     "complex_examples": [
+      {
+       "id": "R-HSA-6805128",
+       "name": "AURKB:NOC2L:p-S15,S20,S269,T284-TP53"
+      },
+      {
+       "id": "R-HSA-6805123",
+       "name": "AURKB:NOC2L:p-S15,S20-TP53"
+      }
+     ],
+     "reaction_examples": [
+      {
+       "id": "R-HSA-6805122",
+       "name": "AURKB binds TP53"
+      },
+      {
+       "id": "R-HSA-6805126",
+       "name": "AURKB phosphorylates TP53"
+      }
+     ],
+     "cite": "profile:machinery~Q96GD4,Q9Y3T9"
+    },
+    {
+     "genes": [
+      "RFFL",
+      "RNF34"
+     ],
+     "uniprot_ids": [
+      "Q8WZ73",
+      "Q969K3"
+     ],
+     "n_genes": 2,
+     "n_complexes": 1,
+     "n_reactions": 1,
+     "complex_examples": [
+      {
+       "id": "R-HSA-6804437",
+       "name": "RNF34,RFFL"
+      }
+     ],
+     "reaction_examples": [
+      {
+       "id": "R-HSA-6804441",
+       "name": "RNF34 or RFFL ubiquitinates phosphorylated TP53"
+      }
+     ],
+     "cite": "profile:machinery~Q8WZ73,Q969K3"
+    }
+   ],
+   "release": null
+  }
+ },
+ {
+  "tool": "read_cypher",
+  "arguments": {
+   "query": "MATCH (g:Gene {id:'P04637'})-[r:ACTS_ON]->(t:Gene) RETURN t.id AS id, t.name AS name, r.reaction_id AS reaction LIMIT 3"
+  },
+  "result": {
+   "n_rows": 3,
+   "truncated": false,
+   "rows": [
+    {
+     "id": "O43819",
+     "name": "SCO2",
+     "reaction": "R-HSA-5632766"
+    },
+    {
+     "id": "P57723",
+     "name": "PCBP4",
+     "reaction": "R-HSA-6803400"
+    },
+    {
+     "id": "Q9UI32",
+     "name": "GLS2",
+     "reaction": "R-HSA-5632924"
+    }
+   ],
+   "cite": "cypher:b6e66ca9692c",
+   "release": null
+  }
+ },
+ {
+  "tool": "resolve_citations",
+  "arguments": {
+   "citations": [
+    "qdrant:Q9NRF9#0",
+    "edge:Q9BVI0-ACTS_ON->P04637@R-HSA-5633460"
+   ]
+  },
+  "result": {
+   "n_results": 2,
+   "results": [
+    {
+     "cite": "qdrant:Q9NRF9#0",
+     "uniprot_id": "Q9NRF9",
+     "chunk_idx": 0,
+     "sentences": [
+      0,
+      2
+     ],
+     "of": 4,
+     "at_start": true,
+     "at_end": false,
+     "text": "Accessory component of the DNA polymerase epsilon complex (PubMed:10801849). Participates in DNA repair and in chromosomal DNA replication (By similarity).",
+     "chars": 155
+    },
+    {
+     "cite": "edge:Q9BVI0-ACTS_ON->P04637@R-HSA-5633460",
+     "source": "PHF20",
+     "rel": "ACTS_ON",
+     "target": "TP53",
+     "properties": {
+      "sign": "negative",
+      "weight": 1,
+      "reaction_id": "R-HSA-5633460",
+      "mechanism": "regulation",
+      "pathway_ids": [
+       "R-HSA-6804757"
+      ]
+     }
+    }
+   ],
+   "release": null
+  }
+ }
+]

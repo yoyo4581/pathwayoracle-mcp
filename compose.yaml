@@ -1,0 +1,240 @@
+# The whole stack: Qdrant + Neo4j, loaded from a pinned backend release, plus
+# the MCP server over them.
+#
+#     docker compose up -d
+#
+# The first `up` builds the server image, downloads ~440MB of release assets
+# and loads both databases, and downloads and verifies the encoder (~420MB)
+# from Hugging Face. Later `up`s reuse all of it from named volumes. When `up`
+# returns, everything is on disk; the server loads the encoder into memory on
+# its first tool call (~10 s).
+#
+#     MCP      http://localhost:8000/mcp     (streamable HTTP)
+#     Qdrant   http://localhost:6333         (REST; /dashboard in a browser)
+#     Neo4j    bolt://localhost:7687         (no auth -- see below)
+#     Browser  http://localhost:7474
+#
+# For a stdio client (Claude Desktop), start a stdio server inside the running
+# mcp container rather than connecting over HTTP:
+#
+#     docker exec -i -e MCP_TRANSPORT=stdio pathwayoracle-mcp-1 pathwayoracle-mcp
+#
+# Ready in ~2 s and creates nothing. `docker compose run` also works but takes
+# ~17 s (past Claude Desktop's 10 s startup limit) and leaves a container behind
+# whenever the client kills it.
+#
+# Database services are copied from compose.serve.yaml in POKnowledgeBase_ETL,
+# where they were verified end to end. `include:` cannot pull that file from a
+# URL, so this is a copy: if you fix something below, fix it there too.
+#
+# --- the pin ---------------------------------------------------------------
+#
+# POKB_RELEASE and BIOBERT_REVISION are a PAIR, and BIOBERT_SHA256 is what
+# checks it. The collections were embedded by one specific set of encoder
+# weights, and a query encoded by different weights lands in a different vector
+# space: retrieval degrades and nothing errors. Bump all three together, never
+# one alone. To move to a newer release:
+#
+#     docker compose down -v      # -v: the seed and databases are per-release
+#     POKB_RELEASE=... BIOBERT_REVISION=... BIOBERT_SHA256=... docker compose up -d
+
+name: pathwayoracle
+
+x-pins:
+  release: &release ${POKB_RELEASE:-serving-v20261006193533}
+  # Hub commit "Encoder 710f986575db"
+  revision: &revision ${BIOBERT_REVISION:-dc05085095f1ae926aa014bb0a88d087bc0dce8f}
+  # sha256 of that commit's model.safetensors -- `weights_sha256` in the Hub
+  # repo's provenance.json. model-fetch refuses to proceed on a mismatch.
+  weights: &weights ${BIOBERT_SHA256:-710f986575dbf663593f85214adaba5f3b7341551dc913c48389a23fe0d1f88b}
+  model: &model yoyo458/BioBERT_GOUniProt_FineTuned
+
+services:
+
+  # --- fetch: pull the pinned release's assets into a shared volume ---------
+  #
+  # Idempotent by file existence, so a re-run costs a few `test -s` calls
+  # rather than 440MB. That is only safe if what is in the volume belongs to
+  # the release being asked for, so the tag is recorded beside the files and a
+  # mismatch stops the stack rather than loading stale data under a new pin.
+  fetch:
+    image: curlimages/curl:8.11.1
+    # root, because this WRITES to the seed volume. A named volume is created
+    # root-owned unless the image has content at the mount path to seed
+    # ownership from; this image has nothing at /seed, so its own uid 100
+    # cannot write there.
+    user: "0:0"
+    environment:
+      RELEASE: *release
+    volumes:
+      - seed:/seed
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'set -e; if [ -s /seed/RELEASE ] && [ "$$(cat /seed/RELEASE)" != "$$RELEASE" ]; then echo "seed volume holds $$(cat /seed/RELEASE), compose asks for $$RELEASE -- run: docker compose down -v" >&2; exit 1; fi; echo "$$RELEASE" > /seed/RELEASE; B=https://github.com/yoyo4581/POKnowledgeBase_ETL/releases/download/$$RELEASE; for f in function_records.snapshot function_chunks.snapshot neo4j.dump SHA256SUMS; do if [ -s "/seed/$$f" ]; then echo "have $$f"; else echo "fetching $$f"; curl -fsSL --retry 3 --retry-delay 5 -o "/seed/$$f.part" "$$B/$$f"; mv "/seed/$$f.part" "/seed/$$f"; fi; done; cd /seed && sha256sum -c SHA256SUMS && echo "checksums OK"'
+
+  # --- qdrant --------------------------------------------------------------
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${QDRANT_REST_PORT:-6333}:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    environment:
+      QDRANT__LOG_LEVEL: INFO
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+  # Restores both collections, unless they are already there. Uploaded as
+  # multipart rather than recovered from a file:// path: Qdrant refuses a
+  # file:// location outside its own snapshots directory.
+  qdrant-load:
+    image: curlimages/curl:8.11.1
+    depends_on:
+      fetch: { condition: service_completed_successfully }
+      qdrant: { condition: service_healthy }
+    volumes:
+      - seed:/seed:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'set -e; for c in function_records function_chunks; do if curl -fsS -o /dev/null "http://qdrant:6333/collections/$$c" 2>/dev/null; then echo "$$c already present"; else echo "restoring $$c"; curl -fsS -X POST "http://qdrant:6333/collections/$$c/snapshots/upload?priority=snapshot" -F "snapshot=@/seed/$$c.snapshot" > /dev/null; echo "  done"; fi; done'
+
+  # --- neo4j ---------------------------------------------------------------
+  #
+  # The load runs BEFORE the server: neo4j-admin needs the store to itself, and
+  # Community has no online restore. user 7474 because the entrypoint would
+  # drop to it anyway and a root load would leave /data unwritable by the
+  # server; a fresh named volume at /data inherits 7474 from the image.
+  neo4j-load:
+    image: neo4j:5.19.0-community
+    user: "7474:7474"
+    depends_on:
+      fetch: { condition: service_completed_successfully }
+    volumes:
+      - neo4j_data:/data
+      - seed:/seed:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'if [ -d /data/databases/neo4j ]; then echo "graph already loaded"; else echo "loading neo4j.dump"; neo4j-admin database load neo4j --from-path=/seed --overwrite-destination=true; fi'
+
+  neo4j:
+    image: neo4j:5.19.0-community
+    restart: unless-stopped
+    depends_on:
+      neo4j-load: { condition: service_completed_successfully }
+    ports:
+      - "127.0.0.1:${NEO4J_HTTP_PORT:-7474}:7474"
+      - "127.0.0.1:${NEO4J_BOLT_PORT:-7687}:7687"
+    volumes:
+      - neo4j_data:/data
+    environment:
+      # No password. Safe only because the ports above are bound to 127.0.0.1.
+      # If you publish them more widely, set neo4j/<password> here BEFORE the
+      # first start -- it is ignored once /data holds a system database.
+      NEO4J_AUTH: none
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_server_memory_heap_max__size: 2G
+      NEO4J_server_memory_pagecache_size: 1G
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474/ >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+
+  # --- model-fetch: the encoder's counterpart to `fetch` ---------------------
+  #
+  # Downloads the pinned encoder and the BM25 model into model_cache and checks
+  # the weights' sha256, so a wrong pin fails `up` instead of degrading search.
+  # Same image as the server, which already has huggingface_hub and fastembed;
+  # it never imports torch. A no-op apart from the hash on a warm cache.
+  model-fetch:
+    build: .
+    image: pathwayoracle-mcp:dev
+    entrypoint: ["pathwayoracle-mcp-prefetch"]
+    volumes:
+      - model_cache:/cache
+    environment:
+      BIOBERT_MODEL_PATH: *model
+      BIOBERT_REVISION: *revision
+      BIOBERT_SHA256: *weights
+
+  # --- registry-load: the toolkit graph ------------------------------------
+  #
+  # Writes the toolkit registry -- (:Toolkit) nodes describing the MCP tools --
+  # into the same Neo4j as the KG, from the toolkit.yaml baked into the image.
+  # Validates the YAML, test-runs every stored query read-only, then replaces
+  # the registry in ONE transaction that rolls back unless the KG fingerprint
+  # (node counts per label, relationship counts per type) is unchanged.
+  # Idempotent; reruns on every `up`. See docs/toolkit.md.
+  registry-load:
+    build: .
+    image: pathwayoracle-mcp:dev
+    entrypoint: ["python", "-m", "pathwayoracle_mcp.registry.load"]
+    depends_on:
+      neo4j: { condition: service_healthy }
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      POKB_RELEASE: *release
+
+  # --- the MCP server -----------------------------------------------------
+  #
+  # Long-lived HTTP, so the encoder (~14 s, ~1 GB) loads once per container
+  # rather than once per client session. It loads on the first tool call, not
+  # at startup -- but from disk, since model-fetch has already downloaded it.
+  mcp:
+    build: .
+    image: pathwayoracle-mcp:dev
+    restart: unless-stopped
+    depends_on:
+      qdrant-load: { condition: service_completed_successfully }
+      model-fetch: { condition: service_completed_successfully }
+      registry-load: { condition: service_completed_successfully }
+    ports:
+      # Loopback only, like the databases: there is no auth on this endpoint.
+      - "127.0.0.1:${MCP_PORT:-8000}:8000"
+    volumes:
+      - model_cache:/cache
+    environment:
+      MCP_TRANSPORT: streamable-http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8000"
+      QDRANT_URL: http://qdrant:6333
+      NEO4J_URI: bolt://neo4j:7687
+      # PubMed abstracts (read-only key). Unset = the three PubMed tools report
+      # that the literature store is not configured; everything else works.
+      ZILLIS_URI: ${ZILLIS_URI:-}
+      ZILLIS_TOKEN: ${ZILLIS_TOKEN:-}
+      # One JSON line per tool call (tool, arguments, citations, timing,
+      # errors) -- the provenance trail. Unset to disable.
+      PATHWAYORACLE_TRACE_FILE: ${PATHWAYORACLE_TRACE_FILE:-/cache/traces/calls.jsonl}
+      # Standalone evidence pages (/evidence/<session>/<view>), written to the cache
+      # volume by any session's process and served by this HTTP service. The URL
+      # is what the host browser sees, so it uses the PUBLISHED port.
+      PATHWAYORACLE_PUBLIC_URL: http://localhost:${MCP_PORT:-8000}
+      # Tool-call spans to Langfuse (or any OTLP backend): off | langfuse | otlp.
+      # Opt-in, so a stack never sends data anywhere because keys happen to be
+      # in .env. The host is as seen FROM THIS CONTAINER: a Langfuse running on
+      # your machine is host.docker.internal, not localhost.
+      PATHWAYORACLE_TRACING: ${PATHWAYORACLE_TRACING:-off}
+      LANGFUSE_HOST: ${PATHWAYORACLE_LANGFUSE_HOST:-http://host.docker.internal:3000}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      BIOBERT_MODEL_PATH: *model
+      BIOBERT_REVISION: *revision
+      # Serve only what model-fetch verified: no Hub calls at runtime, so a
+      # missing or unverified model is an error rather than a silent download.
+      HF_HUB_OFFLINE: "1"
+    extra_hosts:
+      # Docker Desktop resolves host.docker.internal itself; Linux engines need this.
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  seed:            # downloaded release assets; safe to discard after loading
+  qdrant_storage:
+  neo4j_data:
+  model_cache:     # Hugging Face + fastembed downloads

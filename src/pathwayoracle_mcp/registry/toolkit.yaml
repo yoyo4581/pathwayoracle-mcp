@@ -1,0 +1,1214 @@
+# The toolkit registry: the single source of truth for what the MCP server
+# offers, loaded into Neo4j as (:Toolkit) nodes by registry/load.py.
+#
+# Structure (see docs/toolkit.md):
+#   (:Tool)-[:IN_CATEGORY]->(:ToolCategory)     anchor / traverse / enrich / meta
+#   (:Tool)-[:ACCEPTS]->(:IdType)               what a tool can start from
+#   (:Tool)-[:RETURNS]->(:IdType)               what it hands to the next tool
+#   (:Recipe)-[:STEP {order}]->(:Tool)          curated exploration patterns
+#
+# ACCEPTS/RETURNS through shared IdType nodes is what makes chaining
+# computable: "I hold uniprot ids -- what can I do next?" is a two-hop query.
+#
+# kind: cypher  -> `cypher` is run as-is in a READ transaction with the
+#                  call's arguments as parameters. Every cypher tool carries an
+#                  `example`, which registry/load.py executes as its test.
+# kind: python  -> `handler` names a function in the server; the registry
+#                  describes it, the code implements it.
+#
+# core: true    -> listed at MCP startup with its full definition. Everything
+#                  else is reachable through discover_tools + execute_tool.
+#
+# Schema facts the queries below depend on, verified against the KG:
+#   * composition edges point PART -> WHOLE despite their names:
+#       (:Protein)-[:HAS_COMPONENT|HAS_MEMBER|HAS_CANDIDATE]->(:Complex|DefinedSet|CandidateSet)
+#     so pathway membership unfolds as
+#       (Pathway)<-[:IN_PATHWAY]-(e)<-[...*0..6]-(:Protein)-[:IS_FORM_OF]->(:Gene)
+#   * GO ids are stored GO_0006915 (underscore); callers type GO:0006915
+#   * relationship types prefixed "NOT|" are NEGATED annotations
+#   * Drug ids are PubChem CIDs and Compound ids ChEBI numbers -- bare
+#     numbers, so they are only unambiguous together with their label
+
+version: 1
+
+categories:
+  - name: anchor
+    description: Turn free text or a name into identifiers to start from.
+  - name: traverse
+    description: Follow typed relationships from identifiers to more identifiers.
+  - name: enrich
+    description: Attach evidence (function text, snippets, abstracts, annotations) to identifiers.
+  - name: meta
+    description: Describe the data and the toolkit itself; discover and run tools.
+  - name: synthesis
+    description: After gathering -- structure the answer by what the findings share (function, system, interactions, machinery).
+  - name: memory
+    description: Earlier chats -- their episodes, kept by the server. Not a recipe step.
+
+id_types:
+  - name: text
+    description: Free text -- a name, a phrase, a functional description, a question.
+  - name: uniprot
+    description: UniProt accession identifying a protein-coding gene record.
+    kg_label: Gene
+    is_a: node
+    kg_property: id
+    store: neo4j+qdrant
+    format: "P04637"
+    example: P04637
+  - name: reactome_pathway
+    description: Reactome pathway stable id.
+    kg_label: Pathway
+    is_a: node
+    kg_property: id
+    store: neo4j
+    format: "R-HSA-<digits>"
+    example: R-HSA-6803205
+  - name: reactome_reaction
+    description: Reactome reaction stable id; also carried on interaction edges as reaction_id.
+    kg_label: Reaction
+    is_a: node
+    kg_property: id
+    store: neo4j
+    format: "R-HSA-<digits>"
+    example: R-HSA-5632766
+  - name: reactome_entity
+    description: Reactome physical entity (Complex, DefinedSet, CandidateSet, Protein, SmallMolecule...).
+    kg_label: Entity
+    is_a: node
+    kg_property: id
+    store: neo4j
+    format: "R-HSA-<digits>"
+    example: R-HSA-111911
+  - name: go_term
+    description: Gene Ontology term (biological_process, molecular_function, cellular_component).
+    kg_label: Ontology
+    is_a: node
+    kg_property: id
+    store: neo4j
+    format: "GO_<7 digits> (GO:<7 digits> accepted)"
+    example: GO_0006915
+  - name: chebi
+    description: ChEBI compound id (bare number) on Compound nodes.
+    kg_label: Compound
+    is_a: node
+    kg_property: id
+    store: neo4j
+    format: "<digits>"
+    example: "17544"
+  - name: pubchem
+    description: PubChem compound id (bare number) on Drug nodes.
+    kg_label: Drug
+    is_a: node
+    kg_property: id
+    store: neo4j
+    format: "<digits>"
+    example: "29327"
+  - name: pmid
+    description: PubMed id. Cited inside UniProt function text; abstracts searchable in the literature store.
+    store: zilliz
+    format: "<digits>"
+    example: "10801849"
+  - name: chunk
+    description: A sentence window of one protein's function text -- uniprot id plus chunk_idx.
+    store: qdrant
+    format: "{uniprot_id, chunk_idx}"
+    example: "P04637#0"
+  - name: node
+    description: Any KG node id, whatever its label -- what describe_node and expand take.
+    store: neo4j
+    format: "any id above"
+    example: P04637
+
+tools:
+  # ---------------------------------------------------------------- anchor
+  - name: find_entities
+    title: Find entities by name
+    category: [anchor]
+    accepts: [text]
+    returns: [uniprot, reactome_pathway, go_term, pubchem, chebi]
+    kind: cypher
+    core: true
+    description: >-
+      Resolve a name to knowledge-graph identifiers: gene symbols, synonyms and
+      UniProt/Entrez ids; Reactome pathway names; GO term names or ids; drug and
+      compound names. Exact matches rank first. Start here when the question
+      names something; use search_proteins instead when it describes a function.
+    params:
+      text: {type: string, description: "Name, symbol, synonym or id to look up."}
+      labels: {type: array, items: {type: string, enum: [Gene, Pathway, Ontology, Drug, Compound]}, default: null, description: "Restrict to these node types."}
+      limit: {type: integer, default: 10}
+    example: {text: "TP53", labels: null, limit: 5}
+    cite: {items: null, template: "node:{label}:{id}"}
+    cypher: |
+      WITH toLower(trim($text)) AS q
+      WITH q, replace(q, ':', '_') AS qid
+      CALL {
+        WITH q, qid
+        MATCH (n:Gene)
+        WHERE toLower(n.id) = qid OR toLower(n.name) = q OR q IN n.entrez_ids
+           OR q IN [s IN split(toLower(coalesce(n.gene_synonym, '')), ',') | trim(s)]
+           OR toLower(n.name) CONTAINS q
+        RETURN n, 'Gene' AS label
+        UNION
+        WITH q, qid
+        MATCH (n:Pathway) WHERE toLower(n.id) = qid OR toLower(n.name) CONTAINS q
+        RETURN n, 'Pathway' AS label
+        UNION
+        WITH q, qid
+        MATCH (n:Ontology) WHERE toLower(n.id) = qid OR toLower(n.name) CONTAINS q
+        RETURN n, 'Ontology' AS label
+        UNION
+        WITH q, qid
+        MATCH (n:Drug) WHERE n.id = q OR toLower(n.name) CONTAINS q
+        RETURN n, 'Drug' AS label
+        UNION
+        WITH q, qid
+        MATCH (n:Compound) WHERE n.id = q OR toLower(n.name) CONTAINS q
+        RETURN n, 'Compound' AS label
+      }
+      WITH n, label, q, qid WHERE $labels IS NULL OR label IN $labels
+      WITH n, label,
+           CASE WHEN toLower(n.id) = qid OR toLower(n.name) = q THEN 0
+                WHEN toLower(n.name) STARTS WITH q THEN 1 ELSE 2 END AS rank
+      RETURN label, n.id AS id, n.name AS name, rank
+      ORDER BY rank, size(n.name), name
+      LIMIT $limit
+
+  - name: search_proteins
+    title: Semantic search over protein function
+    category: [anchor, enrich]
+    accepts: [text]
+    returns: [uniprot, chunk]
+    kind: python
+    handler: retrieval.search_proteins
+    core: true
+    description: >-
+      Shortlist proteins whose UniProt function text matches a functional
+      description, each with its best snippet as evidence. Phrase queries as
+      functions ("catalyzes transfer of a phosphate to histidine"), not names.
+      The bottom-up entry point.
+    params:
+      query: {type: string}
+      k: {type: integer, default: 10}
+      snippets_per_record: {type: integer, default: 1}
+      mode: {type: string, default: record_hybrid}
+
+  - name: search_abstracts
+    title: Search PubMed abstracts
+    category: [anchor, enrich]
+    accepts: [text, pmid]
+    returns: [pmid]
+    kind: python
+    handler: literature.search_abstracts
+    core: false
+    description: >-
+      Hybrid search over PubMed abstracts: keyword match on an entity phrase,
+      optionally re-ranked by a semantic query phrase, optionally restricted to
+      given PMIDs. Use to find studies about an entity, or to read the studies
+      a protein's function text cites (see cited_pmids).
+    params:
+      entity_phrase: {type: string, description: "Keywords that must appear, e.g. a gene or process name."}
+      query_phrase: {type: string, default: null, description: "What you want the abstract to say."}
+      pmids: {type: array, items: {type: string}, default: null}
+      limit: {type: integer, default: 5}
+
+  # -------------------------------------------------------------- traverse
+  - name: describe_node
+    title: Describe a node and where you can go from it
+    category: [traverse, meta]
+    accepts: [node]
+    returns: [node]
+    kind: cypher
+    result: one
+    core: true
+    description: >-
+      Properties of one knowledge-graph node plus its possible next moves: for
+      every relationship type and direction, the neighbour label and how many
+      neighbours there are. Read the moves, then follow one with expand.
+      Bare numeric ids are ambiguous (drugs vs compounds) -- pass label.
+    params:
+      id: {type: string}
+      label: {type: string, default: null}
+    example: {id: "P04637", label: null}
+    cite: {items: null, template: "node:{id}"}
+    cypher: |
+      MATCH (n) WHERE (n.id = $id OR n.id = replace($id, ':', '_'))
+                  AND ($label IS NULL OR $label IN labels(n))
+      WITH n LIMIT 1
+      CALL {
+        WITH n MATCH (n)-[r]->(m)
+        RETURN 'out' AS direction, type(r) AS rel,
+               head([l IN labels(m) WHERE l <> 'Entity']) AS neighbor, count(*) AS count
+        UNION ALL
+        WITH n MATCH (n)<-[r]-(m)
+        RETURN 'in' AS direction, type(r) AS rel,
+               head([l IN labels(m) WHERE l <> 'Entity']) AS neighbor, count(*) AS count
+      }
+      WITH n, direction, rel, neighbor, count ORDER BY count DESC
+      RETURN [l IN labels(n) WHERE l <> 'Entity'] AS labels, n.id AS id, n.name AS name,
+             apoc.map.clean(properties(n), ['embedding'], []) AS properties,
+             collect({direction: direction, rel: rel, neighbor: neighbor, count: count}) AS moves
+
+  - name: expand
+    title: Follow one relationship type from a node
+    category: [traverse]
+    accepts: [node]
+    returns: [node]
+    kind: cypher
+    result: one
+    core: true
+    description: >-
+      Neighbours of a node along one relationship type and direction, with the
+      relationship's own properties (mechanism, sign, evidence, pathway_ids).
+      Paged: hub nodes have thousands of neighbours, so read `total` and page
+      with skip. Take rel/direction from describe_node's moves.
+    params:
+      id: {type: string}
+      rel: {type: string}
+      direction: {type: string, enum: [out, in, both], default: both}
+      neighbor_label: {type: string, default: null}
+      label: {type: string, default: null, description: "Disambiguates bare numeric ids."}
+      skip: {type: integer, default: 0}
+      limit: {type: integer, default: 25}
+    example: {id: "P04637", rel: "ACTS_ON", direction: "out", neighbor_label: "Gene", label: null, skip: 0, limit: 5}
+    cite: {items: neighbors, template: "edge:{from}-{rel}-{id}"}
+    cypher: |
+      MATCH (n) WHERE (n.id = $id OR n.id = replace($id, ':', '_'))
+                  AND ($label IS NULL OR $label IN labels(n))
+      WITH n LIMIT 1
+      MATCH (n)-[r]-(m)
+      WHERE type(r) = $rel
+        AND ($direction = 'both' OR ($direction = 'out' AND startNode(r) = n)
+                                 OR ($direction = 'in' AND endNode(r) = n))
+        AND ($neighbor_label IS NULL OR $neighbor_label IN labels(m))
+      WITH n, r, m ORDER BY m.name, m.id
+      WITH n, collect({id: m.id, name: m.name,
+                       labels: [l IN labels(m) WHERE l <> 'Entity'],
+                       direction: CASE WHEN startNode(r) = n THEN 'out' ELSE 'in' END,
+                       rel_props: properties(r)}) AS rows
+      RETURN n.id AS from, $rel AS rel, size(rows) AS total, $skip AS skip,
+             rows[$skip..$skip + $limit] AS neighbors
+
+  - name: pathway_genes
+    title: Genes in a Reactome pathway
+    category: [traverse]
+    accepts: [reactome_pathway]
+    returns: [uniprot]
+    kind: cypher
+    result: one
+    core: false
+    description: >-
+      All genes participating in a pathway, unfolding complexes and sets down
+      to their protein members. The top-down step from a system to its parts.
+    params:
+      pathway_id: {type: string}
+    example: {pathway_id: "R-HSA-6803205"}
+    cite: {items: genes, template: "member:{pathway_id}>{uniprot_id}"}
+    cypher: |
+      MATCH (pw:Pathway {id: $pathway_id})<-[:IN_PATHWAY]-(e)
+            <-[:HAS_COMPONENT|HAS_MEMBER|HAS_CANDIDATE*0..6]-(:Protein)
+            -[:IS_FORM_OF]->(g:Gene)
+      WITH pw, collect(DISTINCT {uniprot_id: g.id, symbol: g.name}) AS genes
+      RETURN pw.id AS pathway_id, pw.name AS pathway, size(genes) AS n_genes, genes
+
+  - name: gene_pathways
+    title: Reactome pathways a gene participates in
+    category: [traverse, synthesis]
+    accepts: [uniprot]
+    returns: [reactome_pathway]
+    kind: cypher
+    core: false
+    description: >-
+      Pathways containing any of the given genes (through their proteins and
+      the complexes/sets those belong to), with which of the genes each
+      contains. With several genes, pathways shared by more of them rank first
+      -- the bottom-up step from parts to systems.
+    params:
+      uniprot_ids: {type: array, items: {type: string}}
+      limit: {type: integer, default: 25}
+    example: {uniprot_ids: ["P04637", "Q00987"], limit: 5}
+    cite: {items: null, template: "node:Pathway:{pathway_id}"}
+    cypher: |
+      UNWIND $uniprot_ids AS uid
+      MATCH (g:Gene {id: uid})<-[:IS_FORM_OF]-(:Protein)
+            -[:HAS_COMPONENT|HAS_MEMBER|HAS_CANDIDATE*0..6]->(e)-[:IN_PATHWAY]->(pw:Pathway)
+      WITH pw, collect(DISTINCT g.id) AS genes
+      RETURN pw.id AS pathway_id, pw.name AS pathway, genes, size(genes) AS n
+      ORDER BY n DESC, pathway
+      LIMIT $limit
+
+  - name: gene_interactions
+    title: Directed gene-gene interactions
+    category: [traverse, synthesis]
+    accepts: [uniprot]
+    returns: [uniprot, reactome_reaction, reactome_pathway]
+    kind: cypher
+    result: one
+    core: false
+    description: >-
+      Reactome-derived gene-level interactions touching the given genes:
+      `source` acts on `target` by `mechanism` (catalysis | regulation) with
+      `sign` (positive | negative | null) in reaction `reaction_id` (named in
+      `reaction`). The sign is the source's effect on that reaction -- read the
+      reaction before stating an effect on the target. direction: in = edges
+      into the given genes (who acts on them), out = edges from them. Returns a
+      breakdown of every edge in scope by mechanism and sign, then the edges
+      matching the mechanism/sign filters. Paged.
+    params:
+      uniprot_ids: {type: array, items: {type: string}}
+      direction: {type: string, enum: [in, out, both], default: both}
+      pathway_id: {type: string, default: null}
+      mechanism: {type: string, enum: [catalysis, regulation], default: null}
+      sign: {type: string, enum: [positive, negative], default: null}
+      within_set: {type: boolean, default: false}
+      skip: {type: integer, default: 0}
+      limit: {type: integer, default: 50}
+    example: {uniprot_ids: ["P04637"], direction: "in", pathway_id: null, mechanism: "regulation", sign: "negative", within_set: false, skip: 0, limit: 5}
+    cite: {items: interactions, template: "edge:{source}-ACTS_ON->{target}@{reaction_id}"}
+    coverage: >-
+      {total} of {in_scope} gene-level edges in scope match the filters;
+      `breakdown` counts all {in_scope} by mechanism and sign. Complete for the
+      gene-level edge layer. That layer keeps one edge per gene pair and has no
+      edge where a gene sits inside a set -- gene_reactions covers both, at the
+      reaction level.
+    cypher: |
+      UNWIND $uniprot_ids AS uid
+      MATCH (:Gene {id: uid})-[r:ACTS_ON]-(:Gene)
+      WITH DISTINCT r
+      WITH r, startNode(r) AS a, endNode(r) AS b
+      WHERE ($direction = 'both' OR ($direction = 'in' AND b.id IN $uniprot_ids)
+                                 OR ($direction = 'out' AND a.id IN $uniprot_ids))
+        AND (NOT $within_set OR (a.id IN $uniprot_ids AND b.id IN $uniprot_ids))
+        AND ($pathway_id IS NULL OR $pathway_id IN r.pathway_ids)
+      OPTIONAL MATCH (rx:Entity {id: r.reaction_id})
+      WITH a, b, r, rx ORDER BY a.name, b.name, r.reaction_id
+      WITH collect({source: a.id, source_symbol: a.name, target: b.id, target_symbol: b.name,
+                    mechanism: r.mechanism, sign: r.sign, reaction_id: r.reaction_id,
+                    reaction: rx.name, pathway_ids: r.pathway_ids}) AS scope
+      WITH scope,
+           [m IN ['catalysis', 'regulation'] | {mechanism: m,
+              positive: size([e IN scope WHERE e.mechanism = m AND e.sign = 'positive']),
+              negative: size([e IN scope WHERE e.mechanism = m AND e.sign = 'negative']),
+              unsigned: size([e IN scope WHERE e.mechanism = m AND e.sign IS NULL])}] AS breakdown,
+           [e IN scope WHERE ($mechanism IS NULL OR e.mechanism = $mechanism)
+                         AND ($sign IS NULL OR e.sign = $sign)] AS rows
+      RETURN size(scope) AS in_scope, breakdown, size(rows) AS total, $skip AS skip,
+             rows[$skip..$skip + $limit] AS interactions
+  - name: gene_reactions
+    title: Reactions a gene takes part in, and who controls them
+    category: [traverse]
+    accepts: [uniprot]
+    returns: [reactome_reaction, uniprot]
+    kind: cypher
+    result: one
+    core: false
+    description: >-
+      The reaction layer: every Reactome reaction the given genes take part in
+      -- through any protein form, complex or set containing them -- with their
+      role(s) there (REACTANT, PRODUCT, CATALYST, INHIBITOR, STIMULATOR).
+      `by_regulator` resolves who controls those reactions to GENES: each gene
+      that catalyses, inhibits or stimulates them, with the reactions -- and
+      `via`, the entity that actually plays the role. A gene inside a complex
+      is credited with the complex's role (MDM2 is listed as INHIBITOR of "MDM2
+      ubiquitinates TP53" via the p14ARF:MDM2 complex), so read `via` before
+      attributing the role to the gene alone. Use it
+      for "who regulates / acts on X". regulated_only keeps reactions with an
+      INHIBITOR or STIMULATOR. Paged (reactions); by_regulator covers all.
+    params:
+      uniprot_ids: {type: array, items: {type: string}}
+      role: {type: string, enum: [REACTANT, PRODUCT, CATALYST, INHIBITOR, STIMULATOR], default: null, description: "Only reactions where the given gene plays this role."}
+      regulated_only: {type: boolean, default: false}
+      skip: {type: integer, default: 0}
+      limit: {type: integer, default: 25}
+    example: {uniprot_ids: ["P04637"], role: "REACTANT", regulated_only: true, skip: 0, limit: 5}
+    cite: {items: reactions, template: "reaction:{reaction_id}"}
+    coverage: >-
+      All {total} reactions these genes take part in (through any protein form,
+      complex or set) under the given filters, and every gene that controls
+      them ({n_regulators} in by_regulator). This is the complete reaction layer
+      for these genes in this release; the gene-level edges summarise it.
+    cypher: |
+      UNWIND $uniprot_ids AS uid
+      MATCH (g:Gene {id: uid})<-[:IS_FORM_OF]-(:Protein)
+            -[:HAS_COMPONENT|HAS_MEMBER|HAS_CANDIDATE*0..6]->(e)
+      WITH DISTINCT g, e
+      CALL {
+        WITH e
+        MATCH (e)-[role:REACTANT|CATALYST|INHIBITOR|STIMULATOR]->(rx:Reaction)
+        RETURN rx, type(role) AS role
+        UNION
+        WITH e
+        MATCH (rx:Reaction)-[:PRODUCT]->(e)
+        RETURN rx, 'PRODUCT' AS role
+      }
+      WITH g, rx, collect(DISTINCT role) AS roles, collect(DISTINCT e.name)[0..3] AS via
+      WHERE $role IS NULL OR $role IN roles
+      CALL {
+        WITH rx
+        OPTIONAL MATCH (x)-[c:CATALYST|INHIBITOR|STIMULATOR]->(rx)
+        RETURN [k IN collect(DISTINCT {role: type(c), entity: x.name}) WHERE k.role IS NOT NULL] AS controls
+      }
+      WITH g, rx, roles, via, controls
+      WHERE NOT $regulated_only OR any(k IN controls WHERE k.role IN ['INHIBITOR', 'STIMULATOR'])
+      WITH g, rx, roles, via, controls ORDER BY g.name, rx.name
+      WITH collect({uniprot_id: g.id, symbol: g.name, reaction_id: rx.id, reaction: rx.name,
+                    gene_roles: roles, via: via, controls: controls}) AS rows,
+           collect(DISTINCT rx) AS rxs
+      CALL {
+        WITH rxs
+        UNWIND rxs AS rx
+        MATCH (x)-[c:CATALYST|INHIBITOR|STIMULATOR]->(rx)
+        OPTIONAL MATCH (x)<-[:HAS_COMPONENT|HAS_MEMBER|HAS_CANDIDATE*0..6]-(:Protein)-[:IS_FORM_OF]->(rg:Gene)
+        WITH coalesce(rg.name, x.name) AS regulator, rg.id AS uniprot_id, type(c) AS role,
+             collect(DISTINCT {reaction_id: rx.id, reaction: rx.name, via: x.name,
+                               via_type: head([l IN labels(x) WHERE l <> 'Entity'])}) AS reactions
+        WHERE uniprot_id IS NULL OR NOT uniprot_id IN $uniprot_ids
+        WITH regulator, uniprot_id, role, reactions ORDER BY role, size(reactions) DESC, regulator
+        RETURN collect({regulator: regulator, uniprot_id: uniprot_id, role: role,
+                        n_reactions: size(reactions), reactions: reactions[0..5]}) AS by_regulator
+      }
+      RETURN size(rows) AS total, size(by_regulator) AS n_regulators, by_regulator,
+             $skip AS skip, rows[$skip..$skip + $limit] AS reactions
+  - name: shared_machinery
+    title: Which genes act through the same complexes and reactions
+    category: [synthesis]
+    accepts: [uniprot]
+    returns: [reactome_entity, reactome_reaction]
+    kind: cypher
+    core: false
+    description: >-
+      For a set of genes, the groups of them that share Reactome machinery --
+      complexes they are part of together and reactions they take part in
+      together -- with counts and examples, largest groups first. Shows which
+      findings converge on the same molecular machinery.
+    params:
+      uniprot_ids: {type: array, items: {type: string}}
+      min_genes: {type: integer, default: 2}
+      limit: {type: integer, default: 12}
+    example: {uniprot_ids: ["Q00987", "O15151", "Q96GD4", "Q9Y3T9", "Q9H9B1", "Q96KQ7"], min_genes: 2, limit: 5}
+    cite: {items: null, template: "profile:machinery~{uniprot_ids}"}
+    cypher: |
+      UNWIND $uniprot_ids AS uid
+      MATCH (g:Gene {id: uid})<-[:IS_FORM_OF]-(:Protein)
+            -[:HAS_COMPONENT|HAS_MEMBER|HAS_CANDIDATE*0..6]->(e)
+      WITH DISTINCT g, e
+      CALL {
+        WITH g, e
+        WITH g, e WHERE e:Complex OR e:DefinedSet OR e:CandidateSet
+        RETURN 'complex' AS kind, e AS x
+        UNION
+        WITH g, e
+        MATCH (e)-[:REACTANT|CATALYST|INHIBITOR|STIMULATOR]->(rx:Reaction)
+        RETURN 'reaction' AS kind, rx AS x
+        UNION
+        WITH g, e
+        MATCH (rx:Reaction)-[:PRODUCT]->(e)
+        RETURN 'reaction' AS kind, rx AS x
+      }
+      WITH kind, x, collect(DISTINCT g) AS gs
+      WHERE size(gs) >= $min_genes
+      WITH kind, x, apoc.coll.sort([n IN gs | n.name + '|' + n.id]) AS key
+      WITH key, kind, x ORDER BY x.name
+      WITH key,
+           collect(CASE WHEN kind = 'complex' THEN {id: x.id, name: x.name} END) AS complexes,
+           collect(CASE WHEN kind = 'reaction' THEN {id: x.id, name: x.name} END) AS reactions
+      RETURN [k IN key | split(k, '|')[0]] AS genes, [k IN key | split(k, '|')[1]] AS uniprot_ids,
+             size(key) AS n_genes, size(complexes) AS n_complexes, size(reactions) AS n_reactions,
+             complexes[0..3] AS complex_examples, reactions[0..3] AS reaction_examples
+      ORDER BY n_genes DESC, n_complexes + n_reactions DESC, genes
+      LIMIT $limit
+
+  - name: interaction_paths
+    title: Chains of interactions between two genes
+    category: [traverse]
+    accepts: [uniprot]
+    returns: [uniprot, reactome_reaction]
+    kind: cypher
+    core: false
+    description: >-
+      The shortest chains of Reactome-derived interactions from one gene to
+      another (up to 4 hops), each hop with mechanism, sign, reaction and a
+      citation. For "how could X affect Y" when there is no direct edge.
+      Combine signs hop by hop, reading each against its reaction
+      (reaction_details): a sign is the effect on the reaction, not the target.
+    params:
+      source: {type: string, description: "UniProt id the chain starts from."}
+      target: {type: string, description: "UniProt id the chain ends at."}
+      limit: {type: integer, default: 10}
+    example: {source: "Q13315", target: "P24941", limit: 5}
+    cite: {items: null, template: "path:{ids}"}
+    cypher: |
+      MATCH (s:Gene {id: $source}), (t:Gene {id: $target})
+      MATCH p = allShortestPaths((s)-[:ACTS_ON*..4]->(t))
+      WITH p LIMIT $limit
+      RETURN length(p) AS hops, [n IN nodes(p) | n.name] AS genes, [n IN nodes(p) | n.id] AS ids,
+             [r IN relationships(p) | {source: startNode(r).name, target: endNode(r).name,
+                                       mechanism: r.mechanism, sign: r.sign,
+                                       reaction_id: r.reaction_id,
+                                       cite: 'edge:' + startNode(r).id + '-ACTS_ON->' + endNode(r).id
+                                             + '@' + r.reaction_id}] AS steps
+
+  - name: reaction_details
+    title: What a reaction does and who plays which role
+    category: [enrich]
+    accepts: [reactome_reaction]
+    returns: [uniprot]
+    kind: cypher
+    core: false
+    description: >-
+      For Reactome reaction ids (e.g. the reaction_id on an interaction): the
+      reaction's name, and every participant by role -- REACTANT, PRODUCT,
+      CATALYST, STIMULATOR, INHIBITOR -- with the genes inside each complex or
+      set (the first 15 by symbol; n_genes counts all). This is what an
+      interaction's sign means: e.g. PHF20 is the INHIBITOR of "MDM2 binds
+      TP53", so its negative edge to TP53 protects it.
+    params:
+      reaction_ids: {type: array, items: {type: string}}
+    example: {reaction_ids: ["R-HSA-5633460"]}
+    cite: {items: null, template: "reaction:{reaction_id}"}
+    # _members: every gene of every participant, with its UniProt id -- for the
+    # evidence ledger only (stripped from what the model sees; sets reach 400
+    # genes). genes/n_genes are the model's view of the same list.
+    cypher: |
+      UNWIND $reaction_ids AS rid
+      MATCH (rx:Reaction:Entity {id: rid})
+      CALL {
+        WITH rx
+        MATCH (x)-[role:REACTANT|CATALYST|INHIBITOR|STIMULATOR]->(rx)
+        RETURN type(role) AS role, x
+        UNION
+        WITH rx
+        MATCH (rx)-[:PRODUCT]->(x)
+        RETURN 'PRODUCT' AS role, x
+      }
+      OPTIONAL MATCH (x)<-[:HAS_COMPONENT|HAS_MEMBER|HAS_CANDIDATE*0..6]-(:Protein)-[:IS_FORM_OF]->(g:Gene)
+      WITH rx, role, x, g ORDER BY g.name
+      WITH rx, role, x, collect(DISTINCT CASE WHEN g IS NOT NULL
+                                              THEN {uniprot_id: g.id, symbol: g.name} END) AS members
+      ORDER BY role, x.name
+      RETURN rx.id AS reaction_id, rx.name AS reaction,
+             collect({role: role, entity: x.name, entity_id: x.id,
+                      type: head([l IN labels(x) WHERE l <> 'Entity']),
+                      genes: [m IN members | m.symbol][0..15], n_genes: size(members),
+                      _members: members}) AS participants
+
+  - name: pathway_interactions
+    title: All gene-gene interactions inside a pathway
+    category: [traverse]
+    accepts: [reactome_pathway]
+    returns: [uniprot, reactome_reaction]
+    kind: cypher
+    result: one
+    core: false
+    description: >-
+      Every Reactome-derived gene-gene interaction annotated to one pathway --
+      the wiring diagram of a system. Large pathways have thousands of edges
+      (max ~8,300), so read `total` and page, or filter by mechanism/sign.
+    params:
+      pathway_id: {type: string}
+      mechanism: {type: string, enum: [catalysis, regulation], default: null}
+      sign: {type: string, enum: [positive, negative], default: null}
+      skip: {type: integer, default: 0}
+      limit: {type: integer, default: 50}
+    example: {pathway_id: "R-HSA-6803205", mechanism: null, sign: null, skip: 0, limit: 5}
+    cite: {items: interactions, template: "edge:{source}-ACTS_ON->{target}@{reaction_id}"}
+    cypher: |
+      MATCH (a:Gene)-[r:ACTS_ON]->(b:Gene)
+      WHERE $pathway_id IN r.pathway_ids
+        AND ($mechanism IS NULL OR r.mechanism = $mechanism)
+        AND ($sign IS NULL OR r.sign = $sign)
+      WITH a, b, r ORDER BY a.name, b.name, r.reaction_id
+      WITH collect({source: a.id, source_symbol: a.name, target: b.id, target_symbol: b.name,
+                    mechanism: r.mechanism, sign: r.sign, reaction_id: r.reaction_id}) AS rows
+      RETURN $pathway_id AS pathway_id, size(rows) AS total, $skip AS skip,
+             rows[$skip..$skip + $limit] AS interactions
+
+  - name: gene_go_annotations
+    title: GO annotations of genes, with evidence
+    category: [traverse, enrich, synthesis]
+    accepts: [uniprot]
+    returns: [go_term]
+    kind: cypher
+    core: false
+    description: >-
+      GO terms annotated to the given genes, with the relation (enables,
+      involved_in, located_in, ...) and evidence codes. Negated annotations
+      ("NOT|...") are excluded. experimental_only keeps annotations backed by
+      experimental evidence (EXP, IDA, IPI, IMP, IGI, IEP and high-throughput
+      variants), dropping electronic (IEA) and author statements.
+    params:
+      uniprot_ids: {type: array, items: {type: string}}
+      aspect: {type: string, enum: [biological_process, molecular_function, cellular_component], default: null}
+      experimental_only: {type: boolean, default: false}
+      limit: {type: integer, default: 100}
+    example: {uniprot_ids: ["P04637"], aspect: "molecular_function", experimental_only: true, limit: 5}
+    cite: {items: null, template: "go:{uniprot_id}-{relation}->{go_id}[{evidence}]"}
+    cypher: |
+      UNWIND $uniprot_ids AS uid
+      MATCH (g:Gene {id: uid})-[r]->(t:Ontology)
+      WHERE NOT type(r) STARTS WITH 'NOT|'
+        AND ($aspect IS NULL OR t.hasOBONamespace = $aspect)
+        AND (NOT $experimental_only OR any(e IN r.evidence WHERE e IN
+             ['EXP', 'IDA', 'IPI', 'IMP', 'IGI', 'IEP', 'HTP', 'HDA', 'HMP', 'HGI', 'HEP']))
+      RETURN g.id AS uniprot_id, g.name AS symbol, type(r) AS relation,
+             t.id AS go_id, t.name AS term, t.hasOBONamespace AS aspect, r.evidence AS evidence
+      ORDER BY symbol, aspect, term
+      LIMIT $limit
+
+  - name: pathway_go_profile
+    title: What a pathway does, in GO terms
+    category: [traverse, enrich]
+    accepts: [reactome_pathway]
+    returns: [go_term]
+    kind: cypher
+    core: false
+    description: >-
+      Characterise a pathway by the GO terms its genes share. Pathways and GO
+      are not linked directly; this goes through the member genes. Ranked by
+      fold enrichment -- how much more often the term appears among the
+      pathway's genes than among all annotated genes -- so specific terms beat
+      ubiquitous ones like "protein binding". Background counts include genes
+      annotated to descendant terms.
+    params:
+      pathway_id: {type: string}
+      aspect: {type: string, enum: [biological_process, molecular_function, cellular_component], default: biological_process}
+      min_genes: {type: integer, default: 2}
+      limit: {type: integer, default: 15}
+    example: {pathway_id: "R-HSA-6803205", aspect: "biological_process", min_genes: 2, limit: 5}
+    cite: {items: null, template: "profile:{pathway_id}~{go_id}"}
+    cypher: |
+      CALL {
+        MATCH (g2:Gene) WHERE EXISTS { (g2)-[]->(:Ontology {hasOBONamespace: $aspect}) }
+        RETURN count(g2) AS universe
+      }
+      MATCH (pw:Pathway {id: $pathway_id})<-[:IN_PATHWAY]-(e)
+            <-[:HAS_COMPONENT|HAS_MEMBER|HAS_CANDIDATE*0..6]-(:Protein)
+            -[:IS_FORM_OF]->(g:Gene)
+      WITH universe, pw, collect(DISTINCT g) AS genes
+      UNWIND genes AS g
+      MATCH (g)-[r]->(t:Ontology {hasOBONamespace: $aspect})
+      WHERE NOT type(r) STARTS WITH 'NOT|'
+      WITH universe, pw, size(genes) AS n, t, collect(DISTINCT g.name) AS hit
+      WHERE size(hit) >= $min_genes
+      CALL {
+        WITH t
+        MATCH (d:Ontology)-[:is_a|part_of*0..20]->(t)
+        WITH DISTINCT d
+        MATCH (g2:Gene)-[r2]->(d) WHERE NOT type(r2) STARTS WITH 'NOT|'
+        RETURN count(DISTINCT g2) AS bg
+      }
+      RETURN pw.id AS pathway_id, pw.name AS pathway, t.id AS go_id, t.name AS term,
+             size(hit) AS genes_with_term, n AS pathway_genes, bg AS genes_with_term_overall,
+             round((toFloat(size(hit)) / n) / (toFloat(bg) / universe), 1) AS fold_enrichment,
+             hit AS genes
+      ORDER BY fold_enrichment DESC, genes_with_term DESC
+      LIMIT $limit
+
+  - name: go_term_genes
+    title: Genes annotated to a GO term or its descendants
+    category: [traverse]
+    accepts: [go_term]
+    returns: [uniprot]
+    kind: cypher
+    result: one
+    core: false
+    description: >-
+      Genes annotated to a GO term, including (by default) its more specific
+      descendant terms through is_a / part_of. The top-down step from a GO
+      process to its parts. Paged; broad terms cover thousands of genes.
+    params:
+      go_id: {type: string}
+      include_descendants: {type: boolean, default: true}
+      experimental_only: {type: boolean, default: false}
+      skip: {type: integer, default: 0}
+      limit: {type: integer, default: 50}
+    example: {go_id: "GO:0018344", include_descendants: true, experimental_only: false, skip: 0, limit: 5}
+    cite: {items: genes, template: "member:{go_id}>{uniprot_id}"}
+    cypher: |
+      MATCH (t:Ontology {id: replace($go_id, ':', '_')})
+      CALL {
+        WITH t
+        MATCH (d:Ontology)-[:is_a|part_of*0..10]->(t)
+        WHERE $include_descendants OR d = t
+        RETURN DISTINCT d
+      }
+      MATCH (g:Gene)-[r]->(d)
+      WHERE NOT type(r) STARTS WITH 'NOT|'
+        AND (NOT $experimental_only OR any(e IN r.evidence WHERE e IN
+             ['EXP', 'IDA', 'IPI', 'IMP', 'IGI', 'IEP', 'HTP', 'HDA', 'HMP', 'HGI', 'HEP']))
+      WITH t, g, collect(DISTINCT d.id)[0..3] AS via ORDER BY g.name
+      WITH t, collect({uniprot_id: g.id, symbol: g.name, via_terms: via}) AS rows
+      RETURN t.id AS go_id, t.name AS term, size(rows) AS total, $skip AS skip,
+             rows[$skip..$skip + $limit] AS genes
+
+  - name: common_ontology
+    title: Group genes by what they do (GO hierarchy)
+    category: [synthesis]
+    accepts: [uniprot]
+    returns: [go_term]
+    kind: python
+    handler: graph.common_ontology
+    core: false
+    description: >-
+      Group a set of genes by the Gene Ontology terms they share, as a small
+      hierarchy: level 1 = the most specific informative terms grouping 2+
+      genes; higher levels join those groups under a shared broader term and
+      absorb genes that fit nowhere more specific. exclude_terms sets aside
+      terms that merely restate the question (e.g. "p53" when the genes were
+      chosen for acting on TP53). aspect: biological_process (what they take
+      part in) or molecular_function (what they do).
+    params:
+      uniprot_ids: {type: array, items: {type: string}}
+      aspect: {type: string, enum: [biological_process, molecular_function, cellular_component], default: biological_process}
+      levels: {type: integer, default: 2, description: "1-3: how many levels of grouping"}
+      exclude_terms: {type: array, items: {type: string}, default: null, description: "Words or GO ids to set aside."}
+  - name: read_cypher
+    title: Run a read-only Cypher query
+    category: [traverse]
+    accepts: [node]
+    returns: [node]
+    kind: python
+    handler: graph.read_cypher
+    core: false
+    description: >-
+      LAST RESORT. Run your own read-only Cypher only when the recipe's tools
+      cannot answer a specific part of the question -- and say which part.
+      describe_schema maps the graph for it. Writes are rejected; results are
+      capped and queries time out, so add LIMIT and aggregate.
+    params:
+      query: {type: string}
+      params: {type: object, default: {}}
+
+  # ---------------------------------------------------------------- enrich
+  - name: read_snippets
+    title: Re-query one protein's text
+    category: [enrich]
+    accepts: [uniprot]
+    returns: [chunk]
+    kind: python
+    handler: retrieval.read_snippets
+    core: true
+    description: >-
+      The passages of one protein's function text most relevant to a new
+      question. Use to ask a protein found by any tool about a specific aspect.
+    params:
+      uniprot_id: {type: string}
+      query: {type: string}
+      n: {type: integer, default: 3}
+
+  - name: expand_snippet
+    title: Widen a snippet
+    category: [enrich]
+    accepts: [chunk]
+    returns: [chunk]
+    kind: python
+    handler: retrieval.expand_snippet
+    core: false
+    description: Widen a snippet outward by sentences when it is cut off mid-claim.
+    params:
+      uniprot_id: {type: string}
+      chunk_idx: {type: integer}
+      radius: {type: integer, default: 1}
+
+  - name: read_record
+    title: Read a protein's full function text
+    category: [enrich]
+    accepts: [uniprot]
+    returns: [pmid]
+    kind: python
+    handler: retrieval.read_record
+    core: false
+    description: One protein's complete UniProt function text, including the PubMed ids it cites.
+    params:
+      uniprot_id: {type: string}
+
+  - name: cited_pmids
+    title: Studies a protein's function text cites
+    category: [enrich]
+    accepts: [uniprot]
+    returns: [pmid]
+    kind: python
+    handler: literature.cited_pmids
+    core: false
+    description: >-
+      PubMed ids cited in the given proteins' function text, with the sentence
+      each supports. The bridge from a protein to the studies behind its
+      annotation; follow with read_abstracts.
+    params:
+      uniprot_ids: {type: array, items: {type: string}}
+
+  - name: read_abstracts
+    title: Read PubMed abstracts
+    category: [enrich]
+    accepts: [pmid]
+    returns: [pmid]
+    kind: python
+    handler: literature.read_abstracts
+    core: false
+    description: The abstract text for given PubMed ids, where the literature store has them.
+    params:
+      pmids: {type: array, items: {type: string}}
+
+  # ------------------------------------------------------------------ meta
+  - name: describe_schema
+    title: Map of the knowledge graph
+    category: [meta]
+    accepts: []
+    returns: []
+    kind: python
+    handler: graph.describe_schema
+    core: false
+    description: >-
+      Node types, relationship types, which types each relationship connects,
+      what each relationship means, and counts -- read before writing Cypher
+      or when unsure how to get from one kind of entity to another.
+    params: {}
+
+  - name: discover_tools
+    title: Find more tools
+    category: [meta]
+    accepts: []
+    returns: []
+    kind: python
+    handler: meta.discover_tools
+    core: true
+    description: >-
+      Find tools beyond the ones listed: by what identifiers you already hold
+      (have: "uniprot"), what you want to get (want: "go_term"), category, or
+      free text. Also lists the exploration recipes. Returns full definitions;
+      call a discovered tool through execute_tool.
+    params:
+      have: {type: string, default: null}
+      want: {type: string, default: null}
+      category: {type: string, default: null}
+      text: {type: string, default: null}
+
+  - name: execute_tool
+    title: Run a discovered tool
+    category: [meta]
+    accepts: []
+    returns: []
+    kind: python
+    handler: meta.execute_tool
+    core: true
+    description: Run any toolkit tool by name with arguments matching its definition from discover_tools.
+    params:
+      name: {type: string}
+      arguments: {type: object, default: {}}
+
+  - name: collection_info
+    title: What the vector store holds
+    category: [meta]
+    accepts: []
+    returns: []
+    kind: python
+    handler: retrieval.collection_info
+    core: false
+    description: >-
+      Point counts of the protein-function collections and the available search
+      modes. Distinguishes an unpopulated store from a query that matched nothing.
+    params: {}
+
+  - name: snippet_sources
+    title: Studies behind one passage
+    category: [enrich]
+    accepts: [chunk]
+    returns: [pmid]
+    kind: python
+    handler: literature.snippet_sources
+    core: false
+    description: >-
+      The PubMed ids cited INSIDE one function-text passage (a snippet from
+      search_proteins or read_snippets), each with the sentence it supports.
+      Narrower than cited_pmids, which returns every study the whole record
+      cites: use this to source the specific claim you are answering with.
+    params:
+      uniprot_id: {type: string}
+      chunk_idx: {type: integer}
+      radius: {type: integer, default: 0, description: "Also scan this many sentences either side -- citations often close the sentence after a claim."}
+
+  - name: plan
+    title: Plan the search for a question
+    category: [meta]
+    accepts: [text]
+    returns: []
+    kind: python
+    handler: meta.plan
+    core: true
+    description: >-
+      START HERE. Classify the question as one of these recipes, then call
+      plan(recipe) to get its steps, in order: which tool to call, what each
+      step hands to the next, and what is out of scope. Recipes: {recipes}
+    params:
+      recipe: {type: string, description: "The recipe that matches the question."}
+
+  - name: show_evidence
+    title: Show the evidence behind an answer
+    category: [meta]
+    accepts: [node]
+    returns: []
+    kind: python
+    handler: evidence.show_evidence
+    core: false
+    description: >-
+      Draw the evidence behind your answer for the user. Pass ids only: claims
+      as short labels with the cite ids they rest on. Returns one line, flagging
+      cites not retrieved this session. scope=question draws everything gathered
+      for this question; evidence_index lists what exists. A theme that comes
+      from a tool's grouping (common_ontology group, shared_machinery row,
+      pathway) goes in `themes` with that cite and is shown as from the
+      database; other themes are shown as your own grouping.
+    params:
+      claims: {type: array, items: {type: object}, default: [], description: "[{label, cites, theme?}]"}
+      include: {type: array, items: {type: string}, default: null}
+      scope: {type: string, enum: [claims, question, session], default: claims}
+      neighbors: {type: integer, default: 0}
+      collapse: {type: array, items: {type: object}, default: null, description: "[{label, ids}]"}
+      max_nodes: {type: integer, default: 40}
+      themes: {type: array, items: {type: object}, default: [], description: "[{name, cites}] -- the grouping a theme comes from"}
+
+  - name: evidence_index
+    title: What this session has gathered
+    category: [meta]
+    accepts: []
+    returns: [node]
+    kind: python
+    handler: evidence.evidence_index
+    core: false
+    description: >-
+      Compact index of the evidence gathered in this session: counts by kind
+      and label, and the most-connected entities. With label (e.g. Gene,
+      Reaction, passage, abstract), lists those ids -- for choosing what to
+      pass to show_evidence without re-reading earlier results.
+    params:
+      label: {type: string, default: null}
+      question_only: {type: boolean, default: true}
+      skip: {type: integer, default: 0}
+      limit: {type: integer, default: 30}
+
+  - name: resolve_citations
+    title: Re-fetch cited evidence
+    category: [meta]
+    accepts: [chunk, pmid, node]
+    returns: []
+    kind: python
+    handler: meta.resolve_citations
+    core: false
+    description: >-
+      Look up citation ids from earlier tool results (qdrant:P04637#3,
+      pubmed:10801849, edge:..., go:...) and return the evidence each points
+      to, from the pinned release.
+    params:
+      citations: {type: array, items: {type: string}}
+
+  # ---------------------------------------------------------------- memory
+  - name: recall
+    title: Search earlier chats
+    category: [memory]
+    accepts: [text, node]
+    returns: [node]
+    kind: python
+    handler: memory.recall
+    core: true
+    description: >-
+      Search the episodes of earlier chats (and this chat's earlier exchanges)
+      by ids and/or text. Each row: episode id, date (UTC), KG release, recipe,
+      a summary to navigate by, its size, how each given id was used there
+      (cited > read > seen) and, with ids, the claims that rest on them.
+      recall_episode loads one.
+    params:
+      query: {type: string, default: null}
+      ids: {type: array, items: {type: string}, default: null}
+      limit: {type: integer, default: 5}
+
+  - name: recall_episode
+    title: Load an earlier episode
+    category: [memory]
+    accepts: [text]
+    returns: [node]
+    kind: python
+    handler: memory.recall_episode
+    core: true
+    description: >-
+      One earlier episode as triplets: each claim with the triplets it rests on,
+      then the rest grouped by hub. Loaded into this chat's evidence so its ids
+      can be cited (shown as from an earlier chat). ids narrows it to the claims
+      and triplets around those ids. Text bodies are not kept: re-read them with
+      the normal tools if needed.
+    params:
+      episode_id: {type: string}
+      ids: {type: array, items: {type: string}, default: null}
+
+recipes:
+  - name: fine_grained
+    stage: gather
+    description: A question about one named entity -- what it does, or a specific claim about it.
+    when: '"What does POLE3 do?", "Which study shows X?", "Where is CHRAC1 located?"'
+    scope: >-
+      Answer from the entity's own evidence: its function text and the studies
+      cited for the sentences you use. Do not pull pathway, GO or interaction
+      context unless the question asks for it.
+    steps:
+      - {tool: find_entities, note: "the entity -> its id (the anchor)"}
+      - {tool: read_snippets, note: "query = the question itself; the passages that answer it"}
+      - {tool: snippet_sources, note: "the PMIDs cited inside the passage you will use"}
+      - {tool: read_abstracts, note: "the study behind the claim"}
+
+  - name: top_down
+    stage: gather
+    description: Start from a system (pathway or GO process), break it into parts, enrich the parts.
+    when: '"Explain p53-mediated apoptosis", "What happens in mismatch repair?"'
+    scope: >-
+      Stay inside the system: its own genes and the interactions annotated to
+      it. Enrich only the genes the explanation needs.
+    steps:
+      - {tool: find_entities, note: "the pathway or GO process"}
+      - {tool: pathway_go_profile, note: "what the system does, in GO terms"}
+      - {tool: pathway_genes, note: "its parts (go_term_genes for a GO process)"}
+      - {tool: pathway_interactions, note: "how the parts act on each other"}
+      - {tool: read_snippets, note: "the key genes, against the question"}
+
+  - name: bottom_up
+    stage: gather
+    description: Start from evidence (function text or studies), let it pick the entities, then generalise to systems.
+    when: '"Which proteins phosphorylate histidine, and what are they part of?"'
+    scope: >-
+      Read the evidence before trusting the ranking -- semantic search returns
+      lookalikes. Keep only hits whose own text supports the question, then
+      generalise from those.
+    steps:
+      - {tool: search_proteins, note: "the functional description, phrased as a function"}
+      - {tool: snippet_sources, note: "the studies behind the snippets you keep"}
+      - {tool: read_abstracts}
+      - {tool: gene_pathways, note: "systems the kept hits belong to"}
+
+  - name: gene_set
+    stage: gather
+    description: Explain what a list of genes has in common.
+    when: '"What do these 30 genes from my screen share?"'
+    scope: Explain the set as given; do not expand it with neighbours unless asked.
+    steps:
+      - {tool: find_entities, note: "symbols -> UniProt ids"}
+      - {tool: common_ontology}
+      - {tool: gene_pathways}
+      - {tool: gene_interactions, note: "within_set: true -- how they connect to each other"}
+      - {tool: read_snippets, note: "per group, against the question"}
+
+  - name: mechanistic
+    stage: gather
+    description: How entities regulate or affect one another -- directly, or through a chain of interactions.
+    when: '"Which proteins negatively regulate TP53?", "Does MDM2 inhibit TP53?", "How could loss of ATM affect CDK2?"'
+    scope: >-
+      Report interactions as the graph records them, mechanism and sign per
+      hop. A sign is the regulator's effect on a REACTION: read it against
+      reaction_details before stating an effect on the target, and combine
+      signs explicitly along a chain. Evidence per interaction, not background.
+    steps:
+      - {tool: find_entities, note: "the entities -> UniProt ids"}
+      - {tool: gene_reactions, note: "who controls the reactions X takes part in, resolved to genes (by_regulator)"}
+      - {tool: gene_interactions, note: "signed gene-level edges, for direct effects and chains"}
+      - {tool: interaction_paths, note: "chains between two genes when there is no direct edge"}
+      - {tool: reaction_details, note: "what each reaction does and who plays which role"}
+      - {tool: read_snippets, note: "evidence for each interaction you report"}
+
+  # --- synthesis: after gathering, structure the answer by what the findings
+  # share. Offered by plan() alongside the gathering steps, never required.
+  - name: by_function
+    stage: synthesis
+    description: What the findings do -- grouped by the GO terms they share, at more than one level.
+    when: "several genes answer the question and the answer reads as a list"
+    scope: Name the groups in the answer; the genes are their evidence.
+    steps:
+      - {tool: common_ontology, note: "molecular_function for mechanisms, biological_process for roles"}
+      - {tool: gene_go_annotations, note: "the evidence codes behind a group, if it matters"}
+
+  - name: by_system
+    stage: synthesis
+    description: Which systems the findings belong to -- the Reactome pathways they share.
+    when: "the findings may converge on a few pathways"
+    scope: Lead with the shared systems; note findings that sit outside them.
+    steps:
+      - {tool: gene_pathways, note: "pathways ranked by how many of the genes they contain"}
+
+  - name: by_interaction
+    stage: synthesis
+    description: How the findings act on one another -- regulators, hubs, chains.
+    when: "the findings may form a circuit rather than independent parts"
+    scope: Describe the structure (who acts on whom), not every edge.
+    steps:
+      - {tool: gene_interactions, note: "within_set: true"}
+
+  - name: by_shared_machinery
+    stage: synthesis
+    description: Which findings act through the same complexes and reactions.
+    when: "several findings may converge on the same molecular machinery"
+    scope: Report the convergences; pairs that merely co-occur in large complexes matter less.
+    steps:
+      - {tool: shared_machinery}
+
+# What each KG relationship type MEANS. Loaded as (:Toolkit:RelType) nodes;
+# the loader adds the measured source->target label patterns and counts from
+# the live KG, so the direction notes below are checked rather than assumed.
+# Types matching `pattern` (a prefix) share one entry.
+relationships:
+  # --- gene-level interactions (Reactome-derived, between genes) ---
+  - name: ACTS_ON
+    meaning: "Gene A takes part in a Reactome reaction (reaction_id) that involves gene B. mechanism = catalysis (A catalyses the reaction) | regulation (A regulates it); sign = A's effect ON THE REACTION, not on B. A negative regulator of a reaction that degrades or sequesters B protects B -- e.g. PHF20 inhibits \"MDM2 binds TP53\". Read the reaction (reaction_details) before stating an effect on B."
+  - name: ACTS_ON_CHEMICAL
+    meaning: "Gene catalyses a reaction involving a compound (Gene->Compound), or a compound regulates a gene (Compound->Gene). Same properties as ACTS_ON."
+  - name: ASSOCIATED_WITH
+    meaning: "Gene's product participates in a complex or entity, mostly Gene->Complex. `via` says how."
+  # --- Reactome physical entities and reactions ---
+  - name: IS_FORM_OF
+    meaning: "A Reactome entity is a form of a canonical one -- Protein->Gene (modified/located forms of the gene product), SmallMolecule->Compound (Reactome molecule -> ChEBI), Drug->Drug."
+  - name: HAS_COMPONENT
+    meaning: "PART -> WHOLE despite the name. (Protein|Complex)-[:HAS_COMPONENT]->(Complex) means the source is a component of the target complex."
+  - name: HAS_MEMBER
+    meaning: "PART -> WHOLE despite the name. The source is a member of the target set (DefinedSet: all members equivalent; CandidateSet)."
+  - name: HAS_CANDIDATE
+    meaning: "PART -> WHOLE despite the name. The source is a candidate member of the target CandidateSet."
+  - name: HAS_MOIETY
+    meaning: "The source protein carries the target as a covalently attached moiety (psi_mod = modification type)."
+  - name: IN_PATHWAY
+    meaning: "A physical entity (protein, complex, small molecule, set) participates in the target Reactome pathway."
+  - name: REACTANT
+    meaning: "Entity -> Reaction. The source is consumed by the reaction (stoichiometry)."
+  - name: PRODUCT
+    meaning: "Reaction -> Entity. The reaction produces the target (stoichiometry). Note the direction is the reverse of REACTANT."
+  - name: CATALYST
+    meaning: "Entity -> Reaction. The source catalyses the reaction."
+  - name: STIMULATOR
+    meaning: "Entity -> Reaction. The source positively regulates the reaction."
+  - name: INHIBITOR
+    meaning: "Entity -> Reaction. The source negatively regulates the reaction."
+  # --- GO annotations (Gene -> Ontology), carrying `evidence` codes ---
+  - name: enables
+    meaning: "Gene's product has this molecular function."
+  - name: involved_in
+    meaning: "Gene's product takes part in this biological process."
+  - name: located_in
+    meaning: "Gene's product is found in this cellular component."
+  - name: is_active_in
+    meaning: "Gene's product performs its function in this cellular component."
+  - name: part_of
+    meaning: "Two uses. Gene->Ontology - the product is part of this component/complex. Ontology->Ontology - the source term is part of the target term (hierarchy)."
+  - name: contributes_to
+    meaning: "Gene's product contributes to a function performed by a complex it belongs to."
+  - name: colocalizes_with
+    meaning: "Gene's product is transiently or peripherally associated with this component."
+  - name: acts_upstream_of
+    pattern: acts_upstream_of
+    meaning: "Gene's product acts upstream of this process (variants say within, positive or negative effect)."
+  - name: "NOT|"
+    pattern: "NOT|"
+    meaning: "NEGATED annotation -- evidence that the gene does NOT have this function/process/location. Never treat as positive."
+  # --- GO hierarchy (Ontology -> Ontology) ---
+  - name: is_a
+    meaning: "The source term is a more specific kind of the target term."
+  - name: regulates
+    meaning: "The source process regulates the target process (also positively_/negatively_regulates)."
+  - name: positively_regulates
+    meaning: "The source process increases the target process."
+  - name: negatively_regulates
+    meaning: "The source process decreases the target process."

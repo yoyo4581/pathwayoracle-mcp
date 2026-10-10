@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pathwayoracle-mcp"
+version = "0.1.0"
+description = "MCP tools over the PathwayOracle protein-function knowledge base (Qdrant + Neo4j)."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = [
+    "mcp>=2.2,<3",
+    "qdrant-client>=1.19,<2",
+    # Exact: the sparse side is BM25 with hyperparameters baked into fastembed,
+    # and the stored document vectors were computed with this version. A drift
+    # changes query term weights against them silently.
+    "fastembed==0.8.0",
+    "sentence-transformers>=6.0.1,<7",
+    "numpy>=1.24",
+    "neo4j>=5.19,<6",        # KG + toolkit registry (same database)
+    "pymilvus>=2.5",         # PubMed abstracts (Zilliz Cloud)
+    "pyyaml>=6",             # registry/toolkit.yaml
+    "networkx>=3.3",         # evidence ledger (per-session graph)
+    "opentelemetry-sdk>=1.30",                    # tool-call spans (tracing.py)
+    "opentelemetry-exporter-otlp-proto-http>=1.30",  # -> Langfuse / any OTLP backend
+    # CPU-only build. Pip users on Linux get the ~4.4 GB CUDA wheel from PyPI
+    # unless they install torch from the CPU index first (the Dockerfile does);
+    # uv users get the CPU index via [tool.uv.sources] below.
+    "torch==2.14.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "anthropic>=1.0"]
+
+[project.scripts]
+pathwayoracle-mcp = "pathwayoracle_mcp.server:main"
+pathwayoracle-mcp-prefetch = "pathwayoracle_mcp.prefetch:main"
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pathwayoracle_mcp"]

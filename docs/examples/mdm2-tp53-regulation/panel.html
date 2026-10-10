@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Let&#x27;s focus on MDM2 regulation of TP53: which publications characterize it, and which conditions or diseases affect it?</title>
+<style>
+  :root { --bg:#ffffff; --fg:#1d1d1f; --muted:#6b6b70; --line:#d9d9de; --panel:#f6f6f8; --accent:#2f6fde;
+          --ok:#1f7a3f; --warn:#a15c00; --bad:#b3261e; --hl:#f5b301;
+          --gene:#2f6fde; --rxn:#8e44ad; --pathway:#d9822b; --go:#2e9e5b; --entity:#7f8c8d;
+          --passage:#0f8b8d; --abstract:#0b6e70; --agg:#95a5a6; --pos:#2e9e5b; --neg:#c0392b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#1e1e20; --fg:#ececf1; --muted:#9a9aa3; --line:#3a3a40; --panel:#26262a; --accent:#7aa7ff;
+            --ok:#5ccf86; --warn:#f0a94a; --bad:#ff8a80; --hl:#ffd54f;
+            --gene:#7aa7ff; --rxn:#c79be0; --pathway:#f0a95b; --go:#6fd49a; --entity:#aab4b5;
+            --passage:#4fd1c5; --abstract:#38b2ac; --agg:#b0bec5; --pos:#6fd49a; --neg:#ff8a80; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; background:var(--bg); color:var(--fg);
+               font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #status { color: var(--muted); font-size: 12px; padding: 10px 12px 0; }
+  .wrap { display:grid; grid-template-columns: minmax(200px, 30%) 1fr; gap: 10px; padding: 8px 12px 12px; }
+  @media (max-width: 600px) { .wrap { grid-template-columns: 1fr; } }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 2px 0 6px; font-weight: 600; }
+  .claim { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 6px;
+           background: var(--panel); cursor: pointer; }
+  .claim:hover, .claim.pinned { border-color: var(--hl); }
+  .claim .n { display:inline-block; min-width: 18px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .badge { display:inline-block; font-size: 11px; padding: 0 6px; border-radius: 9px; margin-left: 4px; border: 1px solid currentColor; }
+  .supported, .fetched { color: var(--ok); } .partial, .referenced { color: var(--warn); } .unsupported, .unknown { color: var(--bad); }
+  .cites { color: var(--muted); font-size: 11px; margin-top: 3px; word-break: break-all; }
+  .src { text-transform: none; letter-spacing: 0; font-weight: 500; }
+  .src.database { color: var(--accent); } .src.model { color: var(--muted); border-style: dashed; }
+  .basis { color: var(--muted); font-size: 11px; margin: -4px 0 6px; }
+  .note { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .toolbar { display:flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; align-items:center; }
+  .toolbar button { font: inherit; font-size: 12px; padding: 3px 9px; border: 1px solid var(--line);
+                    background: var(--panel); color: var(--fg); border-radius: 6px; cursor: pointer; }
+  .toolbar button:hover { border-color: var(--accent); }
+  .toolbar button[hidden] { display: none; }
+  .toolbar .sp { flex: 1; }
+  #graph { height: 440px; border: 1px solid var(--line); border-radius: 8px; position: relative; }
+  body.fullscreen #graph { height: calc(100vh - 230px); min-height: 420px; }
+  #tip { position: absolute; pointer-events: none; max-width: 360px; padding: 8px 10px;
+         background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px;
+         box-shadow: 0 4px 14px rgba(0,0,0,.18); display: none; z-index: 10; font-size: 12px; white-space: pre-wrap; }
+  #tip b { display:block; margin-bottom: 4px; white-space: normal; }
+  .legend { display:flex; flex-wrap: wrap; gap: 4px 10px; color: var(--muted); font-size: 11px; margin-top: 6px; }
+  .legend span { cursor: pointer; user-select: none; }
+  .legend span.off { opacity: .35; text-decoration: line-through; }
+  .legend i { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+  #details { margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--panel); display: none; }
+  #details h3 { margin: 0 0 4px; font-size: 13px; }
+  #details .meta { color: var(--muted); font-size: 11px; margin-bottom: 6px; }
+  #details .text { white-space: pre-wrap; font-size: 12px; max-height: 220px; overflow: auto; }
+  #details code { font-size: 11px; }
+</style>
+</head>
+<body>
+<div id="status">Waiting for the evidence view…</div>
+<div class="wrap">
+  <div class="side">
+    <h2>Claims</h2>
+    <div id="claims"></div>
+    <div class="note" id="notes"></div>
+  </div>
+  <div>
+    <div class="toolbar">
+      <button id="b-fit" title="Fit the graph to the frame">Fit</button>
+      <button id="b-phys" title="Pause or resume the force simulation">Pause physics</button>
+      <button id="b-full" title="Fullscreen" hidden>Fullscreen</button>
+      <span class="sp"></span>
+      <button id="b-png" title="Download the graph as PNG">PNG</button>
+      <button id="b-json" title="Download the view as JSON">JSON</button>
+      <button id="b-open" title="Open as a standalone page" hidden>Open page</button>
+    </div>
+    <div id="graph"><div id="tip"></div></div>
+    <div class="legend" id="legend"></div>
+    <div id="details"></div>
+  </div>
+</div>
+
+<script>window.__EVIDENCE__ = {"release": "serving-v20261006193533", "session": "stdio-21a29ece8411", "scope": "claims", "claims": [{"i": 0, "label": "MDM2 ubiquitinates TP53 for proteasomal degradation", "status": "supported", "cites": {"qdrant:Q00987#0": "fetched", "reaction:R-HSA-6804879": "fetched", "pubmed:21317885": "fetched"}, "theme": "Mechanism"}, {"i": 1, "label": "MDM2 binds p53 and blocks its transactivation", "status": "supported", "cites": {"pubmed:9131587": "fetched", "pubmed:8064888": "fetched"}, "theme": "Mechanism"}, {"i": 2, "label": "MDMX/Hdmx keeps a pool of inactive p53", "status": "supported", "cites": {"pubmed:10827196": "fetched", "qdrant:O15151#2": "fetched"}, "theme": "Mechanism"}, {"i": 3, "label": "Ser20 phosphorylation after DNA damage blocks MDM2 binding", "status": "supported", "cites": {"pubmed:10202144": "fetched"}, "theme": "Conditions that release p53"}, {"i": 4, "label": "Ribosomal proteins inhibit MDM2 (ribosome stress)", "status": "supported", "cites": {"pubmed:23874713": "fetched"}, "theme": "Conditions that release p53"}, {"i": 5, "label": "RB binding rescues p53 from MDM2 degradation", "status": "supported", "cites": {"pubmed:10078201": "fetched"}, "theme": "Conditions that release p53"}, {"i": 6, "label": "PHF20 and p14ARF block MDM2 action on TP53", "status": "supported", "cites": {"reaction:R-HSA-5633460": "fetched", "reaction:R-HSA-6804879": "fetched"}, "theme": "Conditions that release p53"}, {"i": 7, "label": "MDM2 amplification in sarcomas", "status": "supported", "cites": {"pubmed:1614537": "fetched", "pubmed:8064888": "fetched", "pubmed:9671804": "fetched"}, "theme": "Disease"}, {"i": 8, "label": "MDM2 splice variants in glioblastoma", "status": "supported", "cites": {"pubmed:10074928": "fetched"}, "theme": "Disease"}, {"i": 9, "label": "MDM2 SNP309 and lung adenocarcinoma risk", "status": "supported", "cites": {"pubmed:24175836": "fetched"}, "theme": "Disease"}, {"i": 10, "label": "UBE4B boosts MDM2 degradation of p53 in brain tumours", "status": "supported", "cites": {"pubmed:21317885": "fetched"}, "theme": "Disease"}], "themes": [{"name": "Mechanism", "claims": [0, 1, 2]}, {"name": "Conditions that release p53", "claims": [3, 4, 5, 6]}, {"name": "Disease", "claims": [7, 8, 9, 10]}], "nodes": [{"id": "R-HSA-6804879", "kind": "entity", "label": "Reaction", "name": "MDM2 ubiquitinates TP53", "cite": "reaction:R-HSA-6804879", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 6, "source": "neo4j", "text": null, "cited": true, "claims": [0, 6]}, {"id": "R-HSA-5633460", "kind": "entity", "label": "Reaction", "name": "MDM2 binds TP53", "cite": "reaction:R-HSA-5633460", "returned_by": ["gene_reactions", "gene_interactions", "reaction_details"], "mentions": 3, "source": "neo4j", "text": null, "cited": true, "claims": [6], "theme": "Conditions that release p53"}, {"id": "qdrant:Q00987#0", "kind": "evidence", "label": "passage", "name": "qdrant:Q00987#0", "cite": "qdrant:Q00987#0", "returned_by": ["read_snippets", "snippet_sources"], "mentions": 2, "source": "qdrant", "text": "E3 ubiquitin-protein ligase that mediates ubiquitination of p53/TP53, leading to its degradation by the proteasome (PubMed:29681526, PubMed:21317885). Inhibits p53/TP53- and p73/TP73-mediated cell cycle arrest and apoptosis by binding its transcriptional activation domain.", "status": "fetched", "cited": true, "claims": [0], "theme": "Mechanism"}, {"id": "pubmed:21317885", "kind": "evidence", "label": "abstract", "name": "UBE4B promotes Hdm2-mediated degradation of the tumor suppressor p53.", "cite": "pubmed:21317885", "returned_by": ["snippet_sources", "read_abstracts"], "mentions": 2, "source": "pubmed", "text": "Title: UBE4B promotes Hdm2-mediated degradation of the tumor suppressor p53.\nAbstract: The TP53 gene (encoding the p53 tumor suppressor) is rarely mutated, although frequently inactivated, in medulloblastoma and ependymoma. Recent work in mouse models showed that the loss of p53 accelerated the development of medulloblastoma. The mechanism underlying p53 inactivation in human brain tumors is not completely understood. We show that ubiquitination factor E4B (UBE4B), an E3 and E4 ubiquitin ligase, physically interacts with p53 and Hdm2 (also known as Mdm2 in mice). UBE4B promotes p53 polyubiquitination and degradation and inhibits p53-dependent transactivation and apoptosis. Notably, silencing UBE4B expression impairs xenotransplanted tumor growth in a p53-dependent manner and overexpression of UBE4B correlates with decreased expression of p53 in these tumors. We also show that UBE4B overexpression is often associated with amplification of its gene in human brain tumors. Our data indicate that amplification and overexpression of UBE4B represent previously undescribed molecular mechanisms of inactivation of p53 in brain tumors.", "status": "fetched", "cited": true, "claims": [0, 10]}, {"id": "qdrant:O15151#2", "kind": "evidence", "label": "passage", "name": "qdrant:O15151#2", "cite": "qdrant:O15151#2", "returned_by": ["read_snippets"], "mentions": 1, "source": "qdrant", "text": "Inhibits degradation of MDM2. Can reverse MDM2-targeted degradation of TP53 while maintaining suppression of TP53 transactivation and apoptotic functions. .", "status": "fetched", "cited": true, "claims": [2], "theme": "Mechanism"}, {"id": "pubmed:10074928", "kind": "evidence", "label": "abstract", "name": "Expression of alternatively spliced mdm2 transcripts correlates with stabilized wild-type p53 protein in human glioblastoma cells.", "cite": "pubmed:10074928", "returned_by": ["search_abstracts"], "mentions": 1, "source": "pubmed", "text": "Title: Expression of alternatively spliced mdm2 transcripts correlates with stabilized wild-type p53 protein in human glioblastoma cells.\nAbstract: A puzzling finding in various human tumors, including glioblastoma multiforme (GBM), is the stabilization of wild-type (wt) p53 protein. The biological significance of this phenomenon and the mechanism by which it occurs are unexplained. Recent reports have revealed that mdm2 exerts its negative regulation on the p53 signal by directly binding p53 protein and thereby instigating its proteasomal degradation. mdm2 has been shown to exist in alternatively spliced forms in human ovarian and bladder carcinomas, and recently in GBM, with loss or disruption of its p53 binding domain. Here we report that alternatively spliced transcripts of mdm2 are present in 7 of 16 human GBM primary cell cultures and in the established GBM cell lines LN 229 and LN 18. Sequencing demonstrated loss of the amino terminal p53 binding domain in these alternatively spliced mdm2 transcripts, and an out-of-frame splicing in the majority of cases. A significant correlation between the presence of mdm2 splice variants and increased expression of wt p53 protein was observed. Furthermore, in the presence of an mdm2 splice variant, wt p53 stabilization occurred despite coincident MDM2 amplification. Our findings suggest that wt p53 protein stabilization may arise as a consequence of alternative splicing of mdm2. Such a mechanism might account for wt p53 protein ac\u2026", "status": "fetched", "cited": true, "claims": [8], "theme": "Disease"}, {"id": "pubmed:10078201", "kind": "evidence", "label": "abstract", "name": "RB regulates the stability and the apoptotic function of p53 via MDM2.", "cite": "pubmed:10078201", "returned_by": ["search_abstracts"], "mentions": 1, "source": "pubmed", "text": "Title: RB regulates the stability and the apoptotic function of p53 via MDM2.\nAbstract: The binding of RB to MDM2 is shown to be essential for RB to overcome both the antiapoptotic function of MDM2 and the MDM2-dependent degradation of p53. The RB-MDM2 interaction does not prevent MDM2 from inhibiting p53-dependent transcription, but the RB-MDM2 complex still binds to p53. Since RB specifically rescues the apoptotic function but not the transcriptional activity of p53 from negative regulation by MDM2, transactivation by wild-type p53 is not required for the apoptotic function of p53. However, an RB-MDM2-p53 trimeric complex is active in p53-mediated transrepression. These data link directly the function of two tumor suppressor proteins and demonstrate a novel role of RB in regulating the apoptotic function of p53.", "status": "fetched", "cited": true, "claims": [5], "theme": "Conditions that release p53"}, {"id": "pubmed:10202144", "kind": "evidence", "label": "abstract", "name": "Critical role for Ser20 of human p53 in the negative regulation of p53 by Mdm2.", "cite": "pubmed:10202144", "returned_by": ["search_abstracts"], "mentions": 1, "source": "pubmed", "text": "Title: Critical role for Ser20 of human p53 in the negative regulation of p53 by Mdm2.\nAbstract: In response to environmental stress, the p53 phosphoprotein is stabilized and activated to inhibit cell growth. p53 stability and activity are negatively regulated by the murine double minute (Mdm2) oncoprotein in an autoregulatory feedback loop. The inhibitory effect of Mdm2 on p53 has to be tightly regulated for proper p53 activity. Phosphorylation is an important level of p53 regulation. In response to DNA damage, p53 is phosphorylated at several N-terminal serines. In this study we examined the role of Ser20, a potential phosphorylation site in human p53, in the regulation of p53 stability and function. Substitution of Ser20 by Ala (p53-Ala20) significantly increases the susceptibility of human p53 to negative regulation by Mdm2 in vivo, as measured by apoptosis and transcription activation assays. Mutation of Ser20 to Ala renders p53 less stable and more prone to Mdm2-mediated degradation. While the in vitro binding of p53 to Mdm2 is not increased by the Ala20 mutation, the same mutation results in a markedly enhanced binding in vivo. This is consistent with the conclusion that phosphorylation of Ser20 in vivo attenuates the binding of wild-type p53 to Mdm2. Peptides bearing non-phosphorylated Ser20 or Ala20 compete with p53 for Mdm2 binding, while a similar peptide with phosphorylated Ser20 does not. This implies a critical role for Ser20 in modulating the negative regulati\u2026", "status": "fetched", "cited": true, "claims": [3], "theme": "Conditions that release p53"}, {"id": "pubmed:10827196", "kind": "evidence", "label": "abstract", "name": "Hdmx stabilizes Mdm2 and p53.", "cite": "pubmed:10827196", "returned_by": ["search_abstracts"], "mentions": 1, "source": "pubmed", "text": "Title: Hdmx stabilizes Mdm2 and p53.\nAbstract: The Mdm2 protein is a key regulator of p53 activity and stability. Upon binding, Mdm2 inhibits the transcription regulatory activity of p53 and promotes its rapid degradation. In this study we investigated the effect of the human Mdm2 homologue Hdmx on p53 stability. We found that Hdmx does not target p53 for degradation, although, like Mdm2, it inhibits p53-mediated transcription activation. On the contrary, Hdmx was found to counteract the degradation of p53 by Mdm2, and to stabilize both p53 and Mdm2. The RING finger of Hdmx was found to be necessary and sufficient for this stabilization, and it probably involves hetero-oligomerization with the RING finger of Mdm2, which may lead to inhibition of Mdm2's ubiquitin ligase activity. However, Hdmx does not relieve the inhibition by Mdm2 of transcription activation by p53, probably due to the formation of a trimeric complex consisting of Hdmx, Mdm2, and p53. We propose a model in which Hdmx secures a pool of largely inactive p53, which, upon the induction of stress, can be quickly activated.", "status": "fetched", "cited": true, "claims": [2], "theme": "Mechanism"}, {"id": "pubmed:1614537", "kind": "evidence", "label": "abstract", "name": "Amplification of a gene encoding a p53-associated protein in human sarcomas.", "cite": "pubmed:1614537", "returned_by": ["search_abstracts"], "mentions": 1, "source": "pubmed", "text": "Title: Amplification of a gene encoding a p53-associated protein in human sarcomas.\nAbstract: Despite extensive data linking mutations in the p53 gene to human tumorigenesis, little is known about the cellular regulators and mediators of p53 function. MDM2 is a strong candidate for one such cellular protein; the MDM2 gene was originally identified by virtue of its amplification in a spontaneously transformed derivative of mouse BALB/c cells and the MDM2 protein subsequently shown to bind to p53 in rat cells transfected with p53 genes. To determine whether MDM2 plays a role in human cancer, we have cloned the human MDM2 gene. Here we show that recombinant-derived human MDM2 protein binds human p53 in vitro, and we use MDM2 clones to localize the human MDM2 gene to chromosome 12q13-14. Because this chromosomal position appears to be altered in many sarcomas, we looked for changes in human MDM2 in such cancers. The gene was amplified in over a third of 47 sarcomas, including common bone and soft tissue forms. These results are consistent with the hypothesis that MDM2 binds to p53, and that amplification of MDM2 in sarcomas leads to escape from p53-regulated growth control. This mechanism of tumorigenesis parallels that for virally-induced tumours, in which viral oncogene products bind to and functionally inactivate p53.", "status": "fetched", "cited": true, "claims": [7], "theme": "Disease"}, {"id": "pubmed:23874713", "kind": "evidence", "label": "abstract", "name": "Ribosomal proteins RPL37, RPS15 and RPS20 regulate the Mdm2-p53-MdmX network.", "cite": "pubmed:23874713", "returned_by": ["search_abstracts"], "mentions": 1, "source": "pubmed", "text": "Title: Ribosomal proteins RPL37, RPS15 and RPS20 regulate the Mdm2-p53-MdmX network.\nAbstract: Changes to the nucleolus, the site of ribosome production, have long been linked to cancer, and mutations in several ribosomal proteins (RPs) have been associated with an increased risk for cancer in human diseases. Relevantly, a number of RPs have been shown to bind to MDM2 and inhibit MDM2 E3 ligase activity, leading to p53 stabilization and cell cycle arrest, thus revealing a RP-Mdm2-p53 signaling pathway that is critical for ribosome biogenesis surveillance. Here, we have identified RPL37, RPS15, and RPS20 as RPs that can also bind Mdm2 and activate p53. We found that each of the aforementioned RPs, when ectopically expressed, can stabilize both co-expressed Flag-tagged Mdm2 and HA-tagged p53 in p53-null cells as well as endogenous p53 in a p53-containing cell line. For each RP, the mechanism of Mdm2 and p53 stabilization appears to be through inhibiting the E3 ubiquitin ligase activity of Mdm2. Interestingly, although they are each capable of inducing cell death and cell cycle arrest, these RPs differ in the p53 target genes that are regulated upon their respective introduction into cells. Furthermore, each RP can downregulate MdmX levels but in distinct ways. Thus, RPL37, RPS15 and RPS20 regulate the Mdm2-p53-MdmX network but employ different mechanisms to do so.", "status": "fetched", "cited": true, "claims": [4], "theme": "Conditions that release p53"}, {"id": "pubmed:24175836", "kind": "evidence", "label": "abstract", "name": "P53 Arg72Pro and MDM2 SNP309 polymorphisms cooperate to increase lung adenocarcinoma risk in Chinese female non-smokers: a case control study.", "cite": "pubmed:24175836", "returned_by": ["search_abstracts"], "mentions": 1, "source": "pubmed", "text": "Title: P53 Arg72Pro and MDM2 SNP309 polymorphisms cooperate to increase lung adenocarcinoma risk in Chinese female non-smokers: a case control study.\nAbstract: Cell cycle deregulation is a major component of carcinogenesis. The p53 tumor suppressor gene plays an important role in regulating cell cycle arrest, and mouse double minute 2 (MDM2) is a key regulator of p53 activity and degradation. Abnormal expression of p53 and MDM2 occurs in various cancers including lung cancer. We investigated the distribution of the p53 Arg72Pro (rs1042522) and MDM2 SNP309 (rs2279744) genotypes in patients and healthy control subjects to assess whether these single nucleotide polymorphisms (SNPs) are associated with an increased risk of lung adenocarcinomas in Chinese female non- smokers. Genotypes of 764 patients and 983 healthy controls were determined using the TaqMan SNP genotyping assay. The p53 Pro/Pro genotype (adjusted OR = 1.55, 95% CI = 1.17-2.06) significantly correlated with an increased risk of lung adenocarcinoma, compared with the Arg/Arg genotype. An increased risk was also noted for MDM2 GG genotype (adjusted OR = 1.68, 95% CI = 1.27-2.21) compared with the TT genotype. Combined p53 Pro/Pro and MDM2 GG genotypes (adjusted OR = 2.66, 95% CI = 1.54-4.60) had a supermultiplicative interaction with respect to lung adenocarcinoma risk. We also found that cooking oil fumes, fuel smoke, and passive smoking may increase the risk of lung adenocarcinomas in Chinese female non-smokers w\u2026", "status": "fetched", "cited": true, "claims": [9], "theme": "Disease"}, {"id": "pubmed:8064888", "kind": "evidence", "label": "abstract", "name": "MDM2 gene amplification and transcript levels in human sarcomas: relationship to TP53 gene status.", "cite": "pubmed:8064888", "returned_by": ["search_abstracts"], "mentions": 1, "source": "pubmed", "text": "Title: MDM2 gene amplification and transcript levels in human sarcomas: relationship to TP53 gene status.\nAbstract: Alterations of the TP53 tumor suppressor gene appear to be implicated in the tumorigenesis and progression of several types of human cancer, including different histologic subtypes of sarcomas. The MDM2 (murine double minute-2) gene encodes a nuclear phosphoprotein that may interact with both mutant and wild-type p53 proteins, thereby inhibiting p53-mediated transactivation in a dose-dependent manner. Recently it has been suggested that mdm2 and p53 proteins are components of an autoregulatory loop in which the MDM2 gene is transactivated by p53.", "status": "fetched", "cited": true, "claims": [1, 7]}, {"id": "pubmed:9131587", "kind": "evidence", "label": "abstract", "name": "A genetic approach to mapping the p53 binding site in the MDM2 protein.", "cite": "pubmed:9131587", "returned_by": ["search_abstracts"], "mentions": 1, "source": "pubmed", "text": "Title: A genetic approach to mapping the p53 binding site in the MDM2 protein.\nAbstract: The MDM2 oncoprotein binds to the tumor suppressor p53 and inhibits its anti-oncogenic functions.", "status": "fetched", "cited": true, "claims": [1], "theme": "Mechanism"}, {"id": "pubmed:9671804", "kind": "evidence", "label": "abstract", "name": "The MDM2 gene amplification database.", "cite": "pubmed:9671804", "returned_by": ["search_abstracts"], "mentions": 1, "source": "pubmed", "text": "Title: The MDM2 gene amplification database.\nAbstract: The p53 tumor suppressor gene is inactivated in human tumors by several distinct mechanisms. The best characterized inactivation mechanisms are: (i) gene mutation; (ii) p53 protein association with viral proteins; (iii) p53 protein association with the MDM2 cellular oncoprotein. The MDM2 gene has been shown to be abnormally up-regulated in human tumors and tumor cell lines by gene amplification, increased transcript levels and enhanced translation. This communication presents a brief review of the spectrum of MDM2 abnormalities in human tumors and compares the tissue distribution of MDM2 amplification and p53 mutation frequencies. In this study, 3889 samples from tumors or xenografts from 28 tumor types were examined for MDM2 amplification from previously published sources. The overall frequency of MDM2 amplification in these human tumors was 7%. Gene amplification was observed in 19 tumor types, with the highest frequency observed in soft tissue tumors (20%), osteosarcomas (16%) and esophageal carcinomas (13%). Tumors which showed a higher incidence of MDM2 amplification than p53 mutation were soft tissue tumors, testicular germ cell cancers and neuro-blastomas. Data from studies where both MDM2 amplification and p53 mutations were analyzed within the same samples showed that mutations in these two genes do not generally occur within the same tumor. In these studies, 29 out of a total of 33 MDM2 amplification-positive t\u2026", "status": "fetched", "cited": true, "claims": [7], "theme": "Disease"}, {"id": "Q00987", "kind": "entity", "label": "Gene", "name": "MDM2", "cite": "Q00987", "returned_by": ["gene_reactions", "reaction_details", "read_snippets", "snippet_sources"], "mentions": 11, "source": "neo4j", "text": null, "cited": false, "claims": [0, 6]}, {"id": "O15151", "kind": "entity", "label": "Gene", "name": "MDM4", "cite": "O15151", "returned_by": ["gene_reactions", "reaction_details", "read_snippets"], "mentions": 9, "source": "neo4j", "text": null, "cited": false, "claims": [0, 2, 6]}, {"id": "P04637", "kind": "entity", "label": "Gene", "name": "TP53", "cite": "node:Gene:P04637", "returned_by": ["find_entities", "gene_reactions", "gene_interactions", "reaction_details"], "mentions": 32, "source": "neo4j", "text": null, "cited": false, "claims": [0, 6]}, {"id": "Q9BVI0", "kind": "entity", "label": "Gene", "name": "PHF20", "cite": "Q9BVI0", "returned_by": ["gene_reactions", "gene_interactions", "reaction_details"], "mentions": 3, "source": "neo4j", "text": null, "cited": false, "claims": [6], "theme": "Conditions that release p53"}, {"id": "Q8N726", "kind": "entity", "label": "Gene", "name": "CDKN2A", "cite": "Q8N726", "returned_by": ["gene_reactions", "reaction_details"], "mentions": 3, "source": "neo4j", "text": null, "cited": false, "claims": [0, 6]}, {"id": "P0CG47", "kind": "entity", "label": "Gene", "name": "UBB", "cite": "P0CG47", "returned_by": ["reaction_details"], "mentions": 3, "source": "neo4j", "text": null, "cited": false, "claims": [0, 6]}, {"id": "P0CG48", "kind": "entity", "label": "Gene", "name": "UBC", "cite": "P0CG48", "returned_by": ["reaction_details"], "mentions": 3, "source": "neo4j", "text": null, "cited": false, "claims": [0, 6]}, {"id": "P62979", "kind": "entity", "label": "Gene", "name": "RPS27A", "cite": "P62979", "returned_by": ["reaction_details"], "mentions": 3, "source": "neo4j", "text": null, "cited": false, "claims": [0, 6]}, {"id": "P62987", "kind": "entity", "label": "Gene", "name": "UBA52", "cite": "P62987", "returned_by": ["reaction_details"], "mentions": 3, "source": "neo4j", "text": null, "cited": false, "claims": [0, 6]}], "edges": [{"id": "P04637|R-HSA-6804879|CATALYST", "source": "P04637", "target": "R-HSA-6804879", "returned_by": ["reaction_details"], "rel": "CATALYST", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "P04637|R-HSA-6804879|REACTANT", "source": "P04637", "target": "R-HSA-6804879", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "P04637|R-HSA-5633460|REACTANT", "source": "P04637", "target": "R-HSA-5633460", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "TP53 Tetramer", "cite": "reaction:R-HSA-5633460", "claims": [], "cited": false}, {"id": "Q00987|R-HSA-6804879|CATALYST", "source": "Q00987", "target": "R-HSA-6804879", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "Q00987|R-HSA-6804879|INHIBITOR", "source": "Q00987", "target": "R-HSA-6804879", "returned_by": ["gene_reactions", "reaction_details"], "rel": "INHIBITOR", "via": "p14ARF:p-S166,S188-MDM2 dimer,p-S166,S188-MDM2:MDM4", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "Q00987|R-HSA-6804879|REACTANT", "source": "Q00987", "target": "R-HSA-6804879", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "Q00987|R-HSA-5633460|REACTANT", "source": "Q00987", "target": "R-HSA-5633460", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2:MDM4", "cite": "reaction:R-HSA-5633460", "claims": [], "cited": false}, {"id": "R-HSA-6804879|P04637|PRODUCT", "source": "R-HSA-6804879", "target": "P04637", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "PolyUb-TP53 Tetramer", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "R-HSA-6804879|Q00987|PRODUCT", "source": "R-HSA-6804879", "target": "Q00987", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2:MDM4", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "R-HSA-6804879|O15151|PRODUCT", "source": "R-HSA-6804879", "target": "O15151", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2:MDM4", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "O15151|R-HSA-6804879|CATALYST", "source": "O15151", "target": "R-HSA-6804879", "returned_by": ["gene_reactions", "reaction_details"], "rel": "CATALYST", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "O15151|R-HSA-6804879|INHIBITOR", "source": "O15151", "target": "R-HSA-6804879", "returned_by": ["gene_reactions", "reaction_details"], "rel": "INHIBITOR", "via": "p14ARF:p-S166,S188-MDM2 dimer,p-S166,S188-MDM2:MDM4", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "O15151|R-HSA-6804879|REACTANT", "source": "O15151", "target": "R-HSA-6804879", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "O15151|R-HSA-5633460|REACTANT", "source": "O15151", "target": "R-HSA-5633460", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2:MDM4", "cite": "reaction:R-HSA-5633460", "claims": [], "cited": false}, {"id": "Q8N726|R-HSA-6804879|INHIBITOR", "source": "Q8N726", "target": "R-HSA-6804879", "returned_by": ["gene_reactions", "reaction_details"], "rel": "INHIBITOR", "via": "p14ARF:p-S166,S188-MDM2 dimer,p-S166,S188-MDM2:MDM4", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "Q9BVI0|R-HSA-5633460|INHIBITOR", "source": "Q9BVI0", "target": "R-HSA-5633460", "returned_by": ["gene_reactions", "reaction_details"], "rel": "INHIBITOR", "via": "PHF20", "cite": "reaction:R-HSA-5633460", "claims": [], "cited": false}, {"id": "Q9BVI0|P04637|ACTS_ON|R-HSA-5633460", "source": "Q9BVI0", "target": "P04637", "returned_by": ["gene_interactions"], "rel": "ACTS_ON", "sign": "negative", "mechanism": "regulation", "reaction": "MDM2 binds TP53", "reaction_id": "R-HSA-5633460", "cite": "edge:Q9BVI0-ACTS_ON->P04637@R-HSA-5633460", "claims": [], "cited": false}, {"id": "R-HSA-5633460|Q00987|PRODUCT", "source": "R-HSA-5633460", "target": "Q00987", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53", "cite": "reaction:R-HSA-5633460", "claims": [], "cited": false}, {"id": "R-HSA-5633460|O15151|PRODUCT", "source": "R-HSA-5633460", "target": "O15151", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53", "cite": "reaction:R-HSA-5633460", "claims": [], "cited": false}, {"id": "R-HSA-5633460|P04637|PRODUCT", "source": "R-HSA-5633460", "target": "P04637", "returned_by": ["reaction_details"], "rel": "PRODUCT", "via": "p-S166,S188-MDM2 dimer, p-S166,S188-MDM2,MDM4:TP53", "cite": "reaction:R-HSA-5633460", "claims": [], "cited": false}, {"id": "P62979|R-HSA-6804879|REACTANT", "source": "P62979", "target": "R-HSA-6804879", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "Ub", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "P62987|R-HSA-6804879|REACTANT", "source": "P62987", "target": "R-HSA-6804879", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "Ub", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "P0CG47|R-HSA-6804879|REACTANT", "source": "P0CG47", "target": "R-HSA-6804879", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "Ub", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "P0CG48|R-HSA-6804879|REACTANT", "source": "P0CG48", "target": "R-HSA-6804879", "returned_by": ["reaction_details"], "rel": "REACTANT", "via": "Ub", "cite": "reaction:R-HSA-6804879", "claims": [], "cited": false}, {"id": "qdrant:Q00987#0|Q00987|describes", "source": "qdrant:Q00987#0", "target": "Q00987", "returned_by": ["read_snippets", "snippet_sources"], "rel": "describes", "cite": "qdrant:Q00987#0", "claims": [], "cited": false}, {"id": "qdrant:Q00987#0|pubmed:21317885|cites|0", "source": "qdrant:Q00987#0", "target": "pubmed:21317885", "returned_by": ["snippet_sources"], "rel": "cites", "sentence": "E3 ubiquitin-protein ligase that mediates ubiquitination of p53/TP53, leading to its degradation by the proteasome (PubMed:29681526, PubMed:21317885).", "cite": "pubmed:21317885", "claims": [], "cited": false}, {"id": "qdrant:O15151#2|O15151|describes", "source": "qdrant:O15151#2", "target": "O15151", "returned_by": ["read_snippets"], "rel": "describes", "cite": "qdrant:O15151#2", "claims": [], "cited": false}], "group_members": {}, "group_edges": [], "unknown": [], "overflow": 0, "view_id": "v2", "question": 2};</script>
+<script>
+// ============================================================================
+// Transport. Two modes from one file:
+//   in a host (Claude Desktop): MCP Apps (ext-apps 2026-01-26), JSON-RPC over
+//     postMessage; the tool result carries a view id and the full view is
+//     fetched through the app-only evidence_view_data tool
+//   standalone (/evidence/<session>/<view>): the view is embedded as
+//     window.__EVIDENCE__ and there is no host
+// ============================================================================
+const PROTOCOL = "2026-01-26";
+const STANDALONE = typeof window.__EVIDENCE__ === "object" && window.__EVIDENCE__ !== null;
+let host = { capabilities: {}, context: {} };
+let nextId = 1;
+const pending = new Map();
+const $ = (id) => document.getElementById(id);
+const send = (msg) => window.parent.postMessage({ jsonrpc: "2.0", ...msg }, "*");
+const request = (method, params) => new Promise((resolve, reject) => {
+  const id = nextId++; pending.set(id, { resolve, reject }); send({ id, method, params });
+});
+const notify = (method, params) => { if (!STANDALONE) send({ method, params }); };
+
+if (!STANDALONE) {
+  window.addEventListener("message", (ev) => {
+    const m = ev.data;
+    if (!m || m.jsonrpc !== "2.0") return;
+    if (m.id !== undefined && pending.has(m.id)) {
+      const p = pending.get(m.id); pending.delete(m.id);
+      return m.error ? p.reject(m.error) : p.resolve(m.result);
+    }
+    if (m.method === "ui/notifications/tool-result") onToolResult(m.params);
+    if (m.method === "ui/notifications/host-context-changed") onContext(m.params);
+  });
+  request("ui/initialize", { appInfo: { name: "pathwayoracle-evidence", version: "0.3.0" },
+                             appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
+                             protocolVersion: PROTOCOL })
+    .then((res) => {
+      host = { capabilities: res.hostCapabilities || {}, context: res.hostContext || {} };
+      onContext(host.context);
+      notify("ui/notifications/initialized", {});
+    })
+    .catch((e) => { $("status").textContent = "Could not connect to the host: " + JSON.stringify(e); });
+  new ResizeObserver(() => notify("ui/notifications/size-changed",
+    { height: Math.ceil(document.documentElement.scrollHeight) })).observe(document.body);
+}
+
+function onContext(ctx) {
+  if (!ctx) return;
+  host.context = { ...host.context, ...ctx };
+  const modes = host.context.availableDisplayModes || [];
+  $("b-full").hidden = !modes.includes("fullscreen");
+  if (host.context.displayMode) document.body.classList.toggle("fullscreen", host.context.displayMode === "fullscreen");
+}
+
+// The model-visible result carries only a view id; the graph comes through the
+// app-only evidence_view_data tool, so it never enters the model's context.
+async function onToolResult(result) {
+  const sc = result && result.structuredContent;
+  if (!sc || !sc.view_id) { $("status").textContent = (sc && sc.error) || "No view in this result."; return; }
+  $("status").textContent = sc.receipt || "";
+  try {
+    const res = await request("tools/call", { name: "evidence_view_data", arguments: { view_id: sc.view_id } });
+    const view = res && (res.structuredContent || JSON.parse((res.content || [{}])[0].text || "{}"));
+    if (!view || view.error) throw new Error((view && view.error) || "empty view");
+    draw(view);
+  } catch (e) {
+    $("status").textContent = "Could not load view " + sc.view_id + ": " + (e.message || JSON.stringify(e));
+  }
+}
+
+// ============================================================================
+// Libraries: Cytoscape (cdnjs) + WebCola/cytoscape-cola (jsDelivr) for physics.
+// ============================================================================
+const LIBS = ["https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.34.3/cytoscape.min.js",
+              "https://cdn.jsdelivr.net/npm/webcola@3.4.0/WebCola/cola.min.js",
+              "https://cdn.jsdelivr.net/npm/cytoscape-cola@2.5.1/cytoscape-cola.js"];
+const load = (src) => new Promise((ok, no) => { const s = document.createElement("script");
+  s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s); });
+const libs = load(LIBS[0]).then(() => load(LIBS[1]).then(() => load(LIBS[2])).then(() => true).catch(() => false));
+
+// ============================================================================
+// Drawing
+// ============================================================================
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const CATEGORIES = [
+  ["gene", "gene", "--gene"], ["reaction", "reaction", "--rxn"], ["pathway", "pathway", "--pathway"],
+  ["go", "GO term", "--go"], ["entity", "complex / other", "--entity"], ["passage", "function text", "--passage"],
+  ["abstract", "abstract", "--abstract"], ["derived", "derived / group", "--agg"],
+];
+function categoryOf(n) {
+  if (n.kind === "evidence") return n.label === "abstract" ? "abstract" : "passage";
+  if (n.kind === "aggregate" || n.kind === "group") return "derived";
+  return { Gene: "gene", Reaction: "reaction", Pathway: "pathway", Ontology: "go" }[n.label] || "entity";
+}
+const colorOf = (n) => css(CATEGORIES.find((c) => c[0] === categoryOf(n))[2]);
+const shapeOf = (n) => n.kind === "evidence" ? "tag" : n.kind === "aggregate" ? "diamond"
+  : n.kind === "group" ? "round-octagon" : n.label === "Reaction" ? "round-rectangle" : "ellipse";
+const short = (s) => { s = String(s || ""); return s.length > 28 ? s.slice(0, 27) + "…" : s; };
+
+let cy = null, view = null, layout = null, physicsOn = true, pinnedClaim = null;
+const hiddenCats = new Set();
+
+function nodeEl(n) {
+  const data = { ...n, color: colorOf(n), shape: shapeOf(n), cat: categoryOf(n), short: short(n.name || n.id) };
+  if (n.theme) data.parent = themeId(n.theme);       // drawn inside its theme's box
+  return { group: "nodes", data };
+}
+const themeId = (name) => "theme:" + name;
+function themeEls(v) {
+  return (v.themes || []).map((t) => ({ group: "nodes",
+    data: { id: themeId(t.name), kind: "theme", name: t.name, short: t.name, claims: t.claims,
+            source: t.source || "model" } }));
+}
+function edgeEl(e) { return { group: "edges", data: { ...e } }; }
+
+function draw(v) {
+  view = v;
+  drawClaims(v);
+  drawLegend();
+  const notes = [];
+  if (v.overflow) notes.push(`${v.overflow} more nodes folded into groups — click a group to open it.`);
+  if (v.unknown && v.unknown.length) notes.push(`Not retrieved this session: ${v.unknown.join(", ")}.`);
+  notes.push(`Release ${v.release || "?"} · view ${v.view_id}`);
+  $("notes").textContent = notes.join(" ");
+  $("b-open").hidden = STANDALONE || !v.standalone_url || !host.capabilities.openLinks;
+
+  libs.then((cola) => {
+    if (!window.cytoscape) { $("status").textContent += " (graph library blocked)"; return; }
+    const holder = document.createElement("div"); holder.style.cssText = "position:absolute;inset:0";
+    $("graph").appendChild(holder);
+    cy = window.cy = cytoscape({
+      container: holder,
+      elements: [...themeEls(v), ...v.nodes.map(nodeEl), ...v.edges.map(edgeEl)],
+      style: [
+        { selector: "node", style: { "label": "data(short)", "background-color": "data(color)", "shape": "data(shape)",
+          "color": css("--fg"), "font-size": 10, "text-valign": "bottom", "text-margin-y": 3,
+          "width": 20, "height": 20, "border-width": 0 } },
+        { selector: "node[?cited]", style: { "border-width": 2, "border-color": css("--fg"), "width": 26, "height": 26 } },
+        { selector: "node[status = 'referenced']", style: { "border-width": 2, "border-style": "dashed", "border-color": css("--warn"), "background-opacity": 0.45 } },
+        { selector: "node[kind = 'group']", style: { "border-style": "dashed", "border-width": 2, "border-color": css("--muted"), "width": 30, "height": 30 } },
+        { selector: "edge", style: { "curve-style": "bezier", "target-arrow-shape": "triangle", "width": 1.3,
+          "line-color": css("--line"), "target-arrow-color": css("--line"), "arrow-scale": 0.8,
+          "font-size": 8, "color": css("--muted"), "text-rotation": "autorotate" } },
+        // Labels only on cited edges -- the rest name their relation on hover and
+        // in the details pane, which keeps dense hubs (e.g. TP53) legible.
+        { selector: "edge[?cited]", style: { "label": "data(rel)", "color": css("--fg") } },
+        { selector: "edge[rel = 'in_entity']", style: { "line-style": "dotted", "target-arrow-shape": "none", "width": 1 } },
+        { selector: "edge[sign = 'negative']", style: { "line-color": css("--neg"), "target-arrow-color": css("--neg") } },
+        { selector: "edge[sign = 'positive']", style: { "line-color": css("--pos"), "target-arrow-color": css("--pos") } },
+        { selector: "edge[?cited]", style: { "width": 2.6 } },
+        { selector: "node[kind = 'theme']", style: { "shape": "round-rectangle", "background-color": css("--panel"),
+          "background-opacity": 0.6, "border-width": 1, "border-color": css("--line"), "label": "data(name)",
+          "text-valign": "top", "text-halign": "center", "font-size": 11, "font-weight": 600, "color": css("--muted"),
+          "padding": 14 } },
+        // Where a theme comes from: solid accent = a grouping from the database,
+        // dashed = the model's own grouping.
+        { selector: "node[kind = 'theme'][source = 'database']", style: { "border-color": css("--accent"), "border-width": 1.5 } },
+        { selector: "node[kind = 'theme'][source = 'model']", style: { "border-style": "dashed" } },
+        { selector: ".dim", style: { "opacity": 0.12 } },
+        { selector: ".hl", style: { "border-width": 3, "border-color": css("--hl"), "line-color": css("--hl"), "target-arrow-color": css("--hl") } },
+        { selector: ".sel", style: { "border-width": 3, "border-color": css("--accent") } },
+      ],
+      layout: { name: "preset" }, minZoom: 0.2, maxZoom: 3,
+    });
+    wireInteractions();
+    cy.layout({ name: "circle", fit: true, padding: 30 }).run();
+    relayout(cola, true);
+  });
+}
+
+function relayout(cola, first) {
+  if (layout) layout.stop();
+  if (cola && window.cytoscape) {
+    layout = cy.elements(":visible").layout({ name: "cola", infinite: physicsOn, animate: true, fit: false,
+      randomize: false, avoidOverlap: true, handleDisconnected: true, nodeSpacing: () => 14,
+      edgeLength: (e) => (["describes", "cites"].includes(e.data("rel")) ? 70 : 115) });
+    layout.run();
+    if (first) setTimeout(() => cy.fit(undefined, 30), 900);
+  } else {
+    layout = cy.elements(":visible").layout({ name: "cose", animate: true, animationDuration: 800, padding: 24 });
+    layout.run();
+  }
+}
+
+// --- claims --------------------------------------------------------------------
+function drawClaims(v) {
+  const box = $("claims"); box.innerHTML = "";
+  if (!v.claims.length) { box.innerHTML = `<div class="cites">No claims — scope "${esc(v.scope)}".</div>`; }
+  // Claims under their themes, in the order the themes were first used.
+  const order = [...(v.themes || []).map((t) => t.name), null];
+  const ordered = order.flatMap((name) => v.claims.filter((c) => (c.theme || null) === name));
+  let lastTheme;
+  for (const c of ordered) {
+    if ((c.theme || null) !== lastTheme && (v.themes || []).length) {
+      lastTheme = c.theme || null;
+      const h = document.createElement("h2");
+      h.textContent = lastTheme || "Other claims";
+      h.style.marginTop = "10px";
+      const theme = lastTheme && (v.themes.find((t) => t.name === lastTheme) || {});
+      if (theme) {
+        const db = theme.source === "database";
+        h.insertAdjacentHTML("beforeend", ` <span class="badge src ${db ? "database" : "model"}">${db ? "from database" : "model's grouping"}</span>`);
+      }
+      if (lastTheme) {
+        h.style.cursor = "pointer";
+        const idx = (v.themes.find((t) => t.name === lastTheme) || {}).claims || [];
+        h.addEventListener("mouseenter", () => { if (pinnedClaim === null) highlightMany(idx); });
+        h.addEventListener("mouseleave", () => { if (pinnedClaim === null) highlight(null); });
+      }
+      box.appendChild(h);
+      if (theme && theme.source === "database" && (theme.basis || []).length) {
+        const b = document.createElement("div");
+        b.className = "basis";
+        b.textContent = theme.basis.map((x) => `${x.name || x.cite}` + (x.returned_by && x.returned_by.length ? ` (${x.returned_by.join(", ")})` : "")).join(" · ");
+        box.appendChild(b);
+      }
+    }
+    const d = document.createElement("div");
+    d.className = "claim"; d.dataset.i = c.i;
+    const weak = Object.entries(c.cites).filter(([, s]) => s !== "fetched");
+    d.innerHTML = `<span class="n">${c.i + 1}.</span>${esc(c.label)}<span class="badge ${c.status}">${c.status}</span>` +
+      `<div class="cites">${Object.keys(c.cites).map(esc).join(" · ")}</div>` +
+      (weak.length ? `<div class="cites">${weak.map(([k, s]) => `<span class="${s}">${esc(k)}: ${s === "referenced" ? "seen, never read" : "not retrieved"}</span>`).join("; ")}</div>` : "");
+    d.addEventListener("mouseenter", () => { if (pinnedClaim === null) highlight(c.i); });
+    d.addEventListener("mouseleave", () => { if (pinnedClaim === null) highlight(null); });
+    d.addEventListener("click", () => pinClaim(c.i));
+    box.appendChild(d);
+  }
+}
+function pinClaim(i) {
+  pinnedClaim = pinnedClaim === i ? null : i;
+  document.querySelectorAll(".claim").forEach((el) => el.classList.toggle("pinned", Number(el.dataset.i) === pinnedClaim));
+  highlight(pinnedClaim);
+  if (pinnedClaim !== null && cy) {
+    const hit = cy.elements().filter((el) => (el.data("claims") || []).includes(pinnedClaim));
+    if (hit.length) cy.animate({ fit: { eles: hit, padding: 60 }, duration: 350 });
+  }
+}
+function highlightMany(indexes) {
+  if (!cy) return;
+  cy.elements().removeClass("dim hl");
+  const hit = cy.elements().filter((el) => (el.data("claims") || []).some((k) => indexes.includes(k)));
+  cy.elements().not(hit).not("node[kind = 'theme']").addClass("dim");
+  hit.addClass("hl");
+}
+function highlight(i) {
+  if (!cy) return;
+  cy.elements().removeClass("dim hl");
+  if (i === null) return;
+  const hit = cy.elements().filter((el) => (el.data("claims") || []).includes(i));
+  cy.elements().not(hit).not("node[kind = 'theme']").addClass("dim");
+  hit.addClass("hl");
+}
+
+// --- legend (click to hide / show a category) -----------------------------------
+function drawLegend() {
+  const box = $("legend"); box.innerHTML = "";
+  for (const [key, label, color] of CATEGORIES) {
+    const s = document.createElement("span");
+    s.innerHTML = `<i style="background:var(${color})"></i>${label}`;
+    s.title = "Click to hide or show";
+    s.addEventListener("click", () => {
+      hiddenCats.has(key) ? hiddenCats.delete(key) : hiddenCats.add(key);
+      s.classList.toggle("off", hiddenCats.has(key));
+      if (cy) cy.nodes().forEach((n) => n.style("display", hiddenCats.has(n.data("cat")) ? "none" : "element"));
+    });
+    box.appendChild(s);
+  }
+  const signs = document.createElement("span");
+  signs.style.cursor = "default";
+  signs.innerHTML = `edges: <b style="color:var(--neg)">negative</b> / <b style="color:var(--pos)">positive</b> · thick = cited · dashed = seen, never read` +
+    `<br>theme boxes: <b style="color:var(--accent)">solid</b> = grouping from the database · dashed = the model's own grouping`;
+  box.appendChild(signs);
+}
+
+// --- hover, click, details, group expansion -----------------------------------------
+function wireInteractions() {
+  const tip = $("tip");
+  const place = (p) => { tip.style.left = Math.max(4, Math.min(p.x + 12, $("graph").clientWidth - 370)) + "px";
+                         tip.style.top = (p.y + 12) + "px"; tip.style.display = "block"; };
+  cy.on("mouseover", "node", (ev) => {
+    const n = ev.target.data();
+    tip.innerHTML = `<b>${esc(n.name)}</b>${n.kind === "group" ? "click to expand\n" : ""}${n.text ? esc(n.text.slice(0, 260)) + (n.text.length > 260 ? "…" : "") : ""}`;
+    place(ev.renderedPosition);
+  });
+  cy.on("mouseover", "edge", (ev) => {
+    const e = ev.target.data();
+    tip.innerHTML = `<b>${esc(e.rel)}</b>${esc([e.mechanism, e.sign, e.reaction].filter(Boolean).join(" · "))}`;
+    place(ev.renderedPosition || ev.position);
+  });
+  cy.on("mouseout", "node, edge", () => { tip.style.display = "none"; });
+  cy.on("grab", "node", () => { tip.style.display = "none"; });
+  cy.on("tap", "node", (ev) => {
+    const n = ev.target.data();
+    if (n.kind === "group") return expandGroup(n.id);
+    showDetails(n, "node");
+    cy.elements().removeClass("sel"); ev.target.addClass("sel");
+  });
+  cy.on("tap", "edge", (ev) => { showDetails(ev.target.data(), "edge"); cy.elements().removeClass("sel"); ev.target.addClass("sel"); });
+  cy.on("tap", (ev) => { if (ev.target === cy) { $("details").style.display = "none"; cy.elements().removeClass("sel"); } });
+}
+
+function showDetails(x, type) {
+  const box = $("details");
+  const claims = (x.claims || []).map((i) => `#${i + 1}`).join(", ");
+  const trail = (x.returned_by || []).join(" → ");
+  if (type === "node") {
+    box.innerHTML = `<h3>${esc(x.name)}</h3>
+      <div class="meta">${esc(x.label || x.kind)} · source ${esc(x.source || "-")}${x.status ? ` · <span class="${x.status}">${x.status === "referenced" ? "seen, never read" : "read"}</span>` : ""}${claims ? ` · supports claim ${claims}` : ""}</div>
+      ${x.text ? `<div class="text">${esc(x.text)}</div>` : ""}
+      <div class="meta" style="margin-top:6px">cite <code>${esc(x.cite || x.id)}</code>${trail ? ` · returned by ${esc(trail)}` : ""}</div>`;
+  } else {
+    const bits = [x.mechanism, x.sign, x.reaction && `reaction: ${x.reaction}`, x.via && `via ${x.via}`,
+                  x.evidence && `evidence ${x.evidence.join(", ")}`].filter(Boolean);
+    box.innerHTML = `<h3>${esc(x.rel)}: ${esc(nameOf(x.source))} → ${esc(nameOf(x.target))}</h3>
+      <div class="meta">${esc(bits.join(" · "))}${claims ? ` · supports claim ${claims}` : ""}</div>
+      ${x.sentence ? `<div class="text">${esc(x.sentence)}</div>` : ""}
+      <div class="meta" style="margin-top:6px">${x.cite ? `cite <code>${esc(x.cite)}</code>` : ""}${trail ? ` · returned by ${esc(trail)}` : ""}</div>`;
+  }
+  box.style.display = "block";
+}
+const nameOf = (id) => { const n = cy && cy.getElementById(id); return n && n.length ? n.data("name") : id; };
+
+function expandGroup(gid) {
+  const members = (view.group_members || {})[gid] || [];
+  if (!members.length) return;
+  const g = cy.getElementById(gid);
+  const at = g.position();
+  cy.batch(() => {
+    for (const m of members) {
+      if (cy.getElementById(m.id).length) continue;
+      const el = cy.add(nodeEl(m));
+      el.position({ x: at.x + (Math.random() - 0.5) * 80, y: at.y + (Math.random() - 0.5) * 80 });
+      if (hiddenCats.has(el.data("cat"))) el.style("display", "none");
+    }
+    g.remove();
+    // Re-add every original edge whose endpoints are now visible; endpoints still
+    // inside another group point at that group.
+    const groupOf = {};
+    for (const [id, ms] of Object.entries(view.group_members || {})) {
+      if (cy.getElementById(id).length) ms.forEach((m) => { groupOf[m.id] = id; });
+    }
+    for (const e of view.group_edges || []) {
+      const s = cy.getElementById(e.source).length ? e.source : groupOf[e.source];
+      const t = cy.getElementById(e.target).length ? e.target : groupOf[e.target];
+      const id = `${s}|${t}|${e.rel}|${e.reaction_id || ""}`;
+      if (!s || !t || s === t || cy.getElementById(e.id).length || cy.getElementById(id).length) continue;
+      cy.add(edgeEl({ ...e, id, source: s, target: t }));
+    }
+  });
+  libs.then((cola) => relayout(cola, false));
+}
+
+// --- toolbar --------------------------------------------------------------------
+$("b-fit").addEventListener("click", () => cy && cy.animate({ fit: { padding: 30 }, duration: 300 }));
+$("b-phys").addEventListener("click", () => {
+  physicsOn = !physicsOn;
+  $("b-phys").textContent = physicsOn ? "Pause physics" : "Resume physics";
+  if (!physicsOn) { if (layout) layout.stop(); } else libs.then((cola) => relayout(cola, false));
+});
+$("b-full").addEventListener("click", async () => {
+  const want = host.context.displayMode === "fullscreen" ? "inline" : "fullscreen";
+  try {
+    const res = await request("ui/request-display-mode", { mode: want });
+    onContext({ displayMode: (res && res.mode) || want });
+    $("b-full").textContent = host.context.displayMode === "fullscreen" ? "Exit fullscreen" : "Fullscreen";
+    setTimeout(() => cy && cy.resize() && cy.fit(undefined, 30), 300);
+  } catch (_) { $("b-full").hidden = true; }
+});
+$("b-open").addEventListener("click", () => request("ui/open-link", { url: view.standalone_url }).catch(() => {}));
+
+function b64(str) { return btoa(unescape(encodeURIComponent(str))); }
+async function download(name, mime, base64) {
+  if (!STANDALONE && host.capabilities.downloadFile) {
+    try {
+      await request("ui/download-file", { contents: [{ type: "resource",
+        resource: { uri: `file:///${name}`, mimeType: mime, blob: base64 } }] });
+      return;
+    } catch (_) { /* fall through to a plain link */ }
+  }
+  const a = document.createElement("a");
+  a.href = `data:${mime};base64,${base64}`; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+}
+$("b-png").addEventListener("click", () => cy && download(`evidence-${view.view_id}.png`, "image/png",
+  cy.png({ output: "base64", full: true, scale: 2, bg: css("--bg") })));
+$("b-json").addEventListener("click", () => view && download(`evidence-${view.view_id}.json`, "application/json",
+  b64(JSON.stringify(view, null, 1))));
+
+// Standalone start goes LAST: draw() uses `libs`, `cy`, `view`, ... which are
+// only initialised once the whole script has run.
+if (STANDALONE) {
+  document.title = `Evidence ${window.__EVIDENCE__.view_id || ""}`;
+  $("status").textContent = `Standalone view ${window.__EVIDENCE__.view_id} · session ${window.__EVIDENCE__.session}`;
+  draw(window.__EVIDENCE__);
+}
+</script>
+</body>
+</html>

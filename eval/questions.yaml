@@ -1,0 +1,69 @@
+# Controlled test set for the toolkit. Each question names the recipe a good
+# run should choose and the facts a correct answer must contain.
+#
+# facts: a list of groups; each group is a list of alternatives, and the group
+# is satisfied when ANY alternative appears in the answer (case-insensitive).
+# The facts score is the fraction of groups satisfied. Expected answers were
+# verified against release serving-v20261006193533 (see the session notes in
+# docs/toolkit.md); re-verify them when the release changes.
+
+questions:
+  - id: q1_pole3
+    recipe: fine_grained
+    text: >-
+      What does POLE3 do, and which published study is its role in DNA
+      polymerase epsilon based on? Summarise that study.
+    facts:
+      - ["Q9NRF9"]
+      - ["polymerase epsilon", "pol epsilon", "Pol ε"]
+      - ["10801849"]
+      - ["histone fold", "histone-fold"]
+      - ["p17"]
+
+  - id: q2_tp53_negative
+    recipe: mechanistic
+    text: >-
+      According to the knowledge graph, which proteins negatively regulate
+      TP53? Keep what the graph records separate from general knowledge.
+    facts:
+      - ["PRDM1"]
+      - ["PHF20"]
+      - ["STAT3"]
+      - ["MDM2"]
+      - ["ubiquitinat"]
+
+  - id: q3_histidine
+    recipe: bottom_up
+    text: >-
+      Which human proteins phosphorylate histidine residues on other proteins,
+      and which pathways are they part of?
+    facts:
+      - ["NME2", "P22392"]
+      - ["NME1", "P15531"]
+      - ["Interconversion of nucleotide"]
+
+  - id: q4_apoptosome
+    recipe: top_down
+    text: >-
+      Explain the Reactome pathway 'Activation of caspases through
+      apoptosome-mediated cleavage': its genes, how they act on each other, and
+      what it does in GO terms.
+    facts:
+      - ["APAF1"]
+      - ["CASP9"]
+      - ["CYCS", "cytochrome c"]
+      - ["CASP3"]
+      - ["CASP7"]
+      - ["XIAP"]
+
+  - id: q5_atm_cdk2
+    recipe: mechanistic
+    text: >-
+      How could loss of ATM change CDK2 activity? Trace a path through the
+      graph with the type and sign of each step, support each step with
+      function text, and cite at least one study.
+    facts:
+      - ["TP53", "p53"]
+      - ["CDKN1A", "p21"]
+      - ["CDK2"]
+      - ["catalysis"]
