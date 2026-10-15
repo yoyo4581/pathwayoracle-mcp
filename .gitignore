@@ -5,6 +5,7 @@ __pycache__/
 dist/
 build/
 .env
+docs/*.md
 
 # Saved chat data from the KG_Memory reference code (personal; stays local)
 *.db
